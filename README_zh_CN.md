@@ -70,6 +70,8 @@ sudo dnf install libayatana-appindicator-gtk3     # Fedora
 
 ## 使用
 
+此分支的 Android Root TUN 入口位于网络设置，支持状态、授权指引、日志与诊断信息。原生对接和诊断导出约定见 [Flutter 对接说明](ROOT_TUN_FLUTTER.md)。
+
 **通过链接导入配置。** 打开下面格式的链接，即可把订阅导入 FlClash。`clashmeta://` 和 `flclash://` 开头的链接同样可用。
 
 ```text
