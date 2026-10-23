@@ -10,7 +10,7 @@
 
 ## 决策
 
-采用 **B：root 独立 mihomo 核心**。借鉴桌面入口新增 Android root 入口，编译 arm64/x86_64；核心自建 TUN、auto-route，agent 管理网络事务与生命周期，独立 root watchdog 兜底。App 经 Kotlin + Unix socket 控制/展示，保持 `${packageName}/core` 的 CoreMethodCall/CoreMethodResponse 不变，Flutter 不直连核心。防回环在 root 侧用核心 fwmark/出口规则，应用识别在 root 侧完成。
+采用 **B：root 独立 mihomo 核心**。借鉴桌面入口新增 Android root 入口，仅编译 arm64-v8a 和 x86_64（不出 armeabi-v7a）；核心自建 TUN、auto-route，agent 管理网络事务与生命周期，独立 root watchdog 兜底。App 经 Kotlin + Unix socket 控制/展示，保持 `${packageName}/core` 的 CoreMethodCall/CoreMethodResponse 不变，Flutter 不直连核心。防回环在 root 侧用核心 fwmark/出口规则，应用识别在 root 侧完成。
 
 首版只用一个 `/data/adb/service.d/flclash-root.sh` 薄入口，运行时文件均在 `/data/adb/flclash-root/`；关闭 Root 功能/卸载清空。改动优先新文件，现有生命周期与传输只留接缝，避免修改 mihomo。所有控制 socket 先用 SO_PEERCRED 校验 UID，异 App 拒绝并记日志。
 
