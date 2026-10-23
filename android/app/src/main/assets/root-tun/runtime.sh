@@ -55,15 +55,67 @@ vacant() {
     return 0
 }
 
-baseline() {
+network_snapshot() {
+    snapshot_prefix=$1
     for family in -4 -6; do
-        ip "$family" rule show > "$STATE/baseline.$family.rules" || return 1
-        ip "$family" route show table all > "$STATE/baseline.$family.routes" || return 1
+        ip "$family" rule show > "$STATE/$snapshot_prefix.$family.rules" || return 1
+        ip "$family" route show table all > "$STATE/$snapshot_prefix.$family.routes" || return 1
     done
+    iptables-save > "$STATE/$snapshot_prefix.iptables" || return 1
+    ip6tables-save > "$STATE/$snapshot_prefix.ip6tables" || return 1
+}
+
+baseline() {
+    network_snapshot baseline || return 1
     ip link show > "$STATE/baseline.links" || return 1
     ip addr show > "$STATE/baseline.addr" || return 1
-    iptables-save > "$STATE/baseline.iptables" || return 1
-    ip6tables-save > "$STATE/baseline.ip6tables" || return 1
+}
+
+normalize() {
+    sed -E '/^[[:space:]]*#/d; s/\[[0-9]+:[0-9]+\]/[0:0]/g; s/ -c [0-9]+ [0-9]+//g;
+        s/ -m comment//g; s/ --comment "([^"\\]|\\.)*"//g; s/ --comment [^[:space:]]+//g' "$1"
+}
+
+compare_restoration() {
+    diff_file=$R/logs/restore-diff.txt
+    : > "$diff_file.tmp"
+    if ! network_snapshot restored; then
+        printf '%s\n' 'CLEANUP_FAILED: could not collect restored network' >> "$diff_file.tmp"
+        mv "$diff_file.tmp" "$diff_file"
+        printf '%s WARN CLEANUP_FAILED: network snapshot unavailable; see restore-diff.txt\n' "$(date +%s)" >> "$R/logs/transitions.log"
+        return 1
+    fi
+    comparison_ok=1
+    for item in -4.rules -6.rules -4.routes -6.routes iptables ip6tables; do
+        if [ ! -f "$STATE/baseline.$item" ]; then
+            printf 'CLEANUP_FAILED: missing baseline.%s\n' "$item" >> "$diff_file.tmp"
+            comparison_ok=0
+            continue
+        fi
+        normalize "$STATE/baseline.$item" > "$STATE/compare.before" || comparison_ok=0
+        normalize "$STATE/restored.$item" > "$STATE/compare.after" || comparison_ok=0
+        case "$item" in
+            *.rules|*.routes)
+                LC_ALL=C sort "$STATE/compare.before" > "$STATE/compare.before.sorted"
+                LC_ALL=C sort "$STATE/compare.after" > "$STATE/compare.after.sorted"
+                mv "$STATE/compare.before.sorted" "$STATE/compare.before"
+                mv "$STATE/compare.after.sorted" "$STATE/compare.after"
+                ;;
+        esac
+        if diff -u "$STATE/compare.before" "$STATE/compare.after" > "$STATE/compare.diff" 2>&1; then
+            continue
+        else
+            diff_result=$?
+            printf '\n[%s]\n' "$item" >> "$diff_file.tmp"
+            cat "$STATE/compare.diff" >> "$diff_file.tmp"
+            [ "$diff_result" -eq 1 ] || comparison_ok=0
+        fi
+    done
+    mv "$diff_file.tmp" "$diff_file"
+    if [ -s "$diff_file" ]; then
+        printf '%s WARN CLEANUP_FAILED: network differs from baseline; see restore-diff.txt\n' "$(date +%s)" >> "$R/logs/transitions.log"
+    fi
+    [ "$comparison_ok" -eq 1 ]
 }
 
 install_rules() {
@@ -125,7 +177,8 @@ stop_core() {
 cleanup() {
     stop_core || return 1
     if [ ! -f "$STATE/owned" ]; then
-        vacant
+        vacant || return 1
+        if [ -f "$STATE/baseline.iptables" ]; then compare_restoration; fi
         return $?
     fi
     cleanup_ok=1
@@ -151,6 +204,7 @@ cleanup() {
     if ip link show flcrtun0 >/dev/null 2>&1; then ip link delete flcrtun0 || cleanup_ok=0; fi
     vacant || cleanup_ok=0
     [ "$cleanup_ok" -eq 1 ] || return 1
+    compare_restoration || return 1
     rm -f "$STATE/owned"
 }
 
@@ -288,6 +342,7 @@ case "${1:-}" in
     status)
         cat "$STATE/status" 2>/dev/null || echo disabled
         printf 'dns:%s\n' "$(cat "$STATE/private-dns" 2>/dev/null)"
+        if [ -s "$R/logs/restore-diff.txt" ]; then echo restore-diff:yes; fi
         always_on=$(settings get secure always_on_vpn_app 2>/dev/null)
         if [ "$always_on" = "$(cat "$R/config/app.package" 2>/dev/null)" ]; then echo always-on:yes; fi
         alive "$RUN/supervisor.pid" || exit 1

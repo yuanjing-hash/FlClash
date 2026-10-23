@@ -1,15 +1,9 @@
 package com.follow.clash.plugins
 
-import android.app.Activity
-import android.content.ClipData
-import android.content.Intent
-import androidx.core.content.FileProvider
 import com.follow.clash.ServiceState
 import com.follow.clash.common.Components
 import com.follow.clash.root.success
 import io.flutter.embedding.engine.plugins.FlutterPlugin
-import io.flutter.embedding.engine.plugins.activity.ActivityAware
-import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
 import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -18,17 +12,14 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 class RootTunPlugin :
     FlutterPlugin,
     MethodChannel.MethodCallHandler,
-    EventChannel.StreamHandler,
-    ActivityAware {
+    EventChannel.StreamHandler {
     private lateinit var methods: MethodChannel
     private lateinit var events: EventChannel
     private lateinit var scope: CoroutineScope
-    private var activity: Activity? = null
     private val backend get() = ServiceState.rootTun
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -57,8 +48,11 @@ class RootTunPlugin :
                     when (call.method) {
                         "getState" -> success(backend.snapshot.toMap())
                         "detectRoot" -> backend.detect()
-                        "start", "stop", "requestAuth", "recheckRoot", "cleanupResidue" -> backend.command(call.method, args)
-                        "cleanup" -> backend.command("cleanupResidue", args)
+                        "start", "stop", "requestAuth", "recheckRoot", "cleanupResidue", "setAutostart" ->
+                            backend.command(
+                                call.method,
+                                args,
+                            )
                         "getLogs" -> {
                             require(args["cursor"] == null || args["cursor"] is String) { "cursor must be a string or null" }
                             val limit = args["limit"] ?: 200
@@ -66,18 +60,7 @@ class RootTunPlugin :
                             success(backend.getLogs(args["cursor"] as? String, limit))
                         }
                         "exportDiagnostics" -> {
-                            val file = backend.exportDiagnostics()
-                            val host = checkNotNull(activity) { "An activity is required to share diagnostics" }
-                            val uri = FileProvider.getUriForFile(host, "${host.packageName}.root-tun.diagnostics", file)
-                            val send =
-                                Intent(Intent.ACTION_SEND).apply {
-                                    type = "application/zip"
-                                    putExtra(Intent.EXTRA_STREAM, uri)
-                                    clipData = ClipData.newRawUri("Root TUN diagnostics", uri)
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                            withContext(Dispatchers.Main) { host.startActivity(Intent.createChooser(send, null)) }
-                            success(mapOf("uri" to uri.toString(), "mimeType" to "application/zip", "shared" to true))
+                            success(backend.exportDiagnostics(args["requestId"]))
                         }
                         else -> {
                             result.notImplemented()
@@ -86,7 +69,12 @@ class RootTunPlugin :
                     }
                 result.success(response)
             } catch (error: IllegalArgumentException) {
-                result.error("INVALID_ARGUMENT", error.message, null)
+                if (call.method == "exportDiagnostics") {
+                    result.error("CORE_ERROR", "Diagnostics could not be exported", mapOf("phase" to "exportDiagnostics"))
+                } else {
+                    val details = error.message?.takeIf { it in setOf("ROOT_TUN_DISABLED", "AUTH_REQUIRED") }?.let { mapOf("reason" to it) }
+                    result.error("INVALID_ARGUMENT", error.message, details)
+                }
             } catch (_: Exception) {
                 result.error("CORE_ERROR", "Root TUN operation could not complete", mapOf("phase" to call.method))
             }
@@ -109,20 +97,4 @@ class RootTunPlugin :
     }
 
     override fun onCancel(arguments: Any?) = backend.unsubscribe()
-
-    override fun onAttachedToActivity(binding: ActivityPluginBinding) {
-        activity = binding.activity
-    }
-
-    override fun onDetachedFromActivityForConfigChanges() {
-        activity = null
-    }
-
-    override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
-        activity = binding.activity
-    }
-
-    override fun onDetachedFromActivity() {
-        activity = null
-    }
 }

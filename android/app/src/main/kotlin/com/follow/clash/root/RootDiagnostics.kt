@@ -14,17 +14,33 @@ internal object RootDiagnostics {
         logs: Map<String, Any?>,
         runtime: RootRuntime,
     ): File {
-        val directory = File(context.cacheDir, "root-tun-diagnostics").apply { mkdirs() }
+        val evidence = runtime.diagnostics(snapshot.authStatus == "granted")
+        return archive(
+            context.cacheDir,
+            "${Build.MANUFACTURER} ${Build.MODEL}\n" +
+                "Android ${Build.VERSION.RELEASE} SDK ${Build.VERSION.SDK_INT}\n" +
+                "incremental=${Build.VERSION.INCREMENTAL}\nsecurity_patch=${Build.VERSION.SECURITY_PATCH}\n" +
+                "package=${context.packageName}\n" + evidence.device,
+            snapshot,
+            logs,
+            evidence,
+        )
+    }
+
+    internal fun result(file: File): Map<String, Any> =
+        mapOf("path" to file.absolutePath, "sizeBytes" to file.length(), "mimeType" to "application/zip")
+
+    internal fun archive(
+        cacheDirectory: File,
+        device: String,
+        snapshot: RootSnapshot,
+        logs: Map<String, Any?>,
+        evidence: RootDiagnosticEvidence,
+    ): File {
+        val directory = File(cacheDirectory, "root-tun-diagnostics").apply { check(mkdirs() || isDirectory) }
         directory.listFiles()?.filter { it.lastModified() < System.currentTimeMillis() - 86_400_000 }?.forEach { it.delete() }
-        val file = File(directory, "root-tun-${System.currentTimeMillis()}.zip")
+        val file = File.createTempFile("root-tun-", ".zip", directory)
         val gson = GsonBuilder().serializeNulls().setPrettyPrinting().create()
-        val network =
-            if (snapshot.authStatus == "granted") {
-                runtime.diagnostics()
-            } else {
-                val result = RootShell().execute(listOf("sh", "-c", "getenforce; ip rule; ip -6 rule; ip link; ip addr"))
-                "Root access unavailable; grant access in the manager and recheck to collect privileged evidence.\n${result.stdout}\n${result.stderr}"
-            }
         ZipOutputStream(file.outputStream()).use { zip ->
             fun entry(
                 name: String,
@@ -34,14 +50,13 @@ internal object RootDiagnostics {
                 zip.write(redact(text).toByteArray())
                 zip.closeEntry()
             }
-            entry(
-                "device.txt",
-                "${Build.MANUFACTURER} ${Build.MODEL}\nAndroid ${Build.VERSION.RELEASE} API ${Build.VERSION.SDK_INT}\npackage=${context.packageName}\n",
-            )
+            entry("device.txt", device)
             entry("state.json", gson.toJson(snapshot.toMap()))
             entry("app-root-tun-log.json", gson.toJson(logs))
-            entry("network-and-core.txt", network)
-            val retained = File(context.cacheDir, "root-tun-last-runtime.log")
+            entry("network-and-core.txt", evidence.network)
+            val restoreDiff = evidence.restoreDiff ?: File(cacheDirectory, "root-tun-restore-diff.txt").takeIf { it.isFile }?.readText()
+            if (restoreDiff != null) entry("logs/restore-diff.txt", restoreDiff)
+            val retained = File(cacheDirectory, "root-tun-last-runtime.log")
             if (retained.isFile) entry("previous-runtime.txt", retained.readText())
         }
         return file
@@ -54,4 +69,27 @@ internal object RootDiagnostics {
             .replace(Regex("([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\\s@]+@"), "$1[redacted]@")
             .replace(Regex("(https?://[^\\s?'\\\"]+)\\?[^\\s'\\\"]+"), "$1?[redacted]")
             .replace(Regex("(?i)(?:ss|ssr|vmess|vless|trojan)://[^\\s]+"), "[redacted proxy URL]")
+}
+
+internal data class RootDiagnosticEvidence(
+    val device: String,
+    val network: String,
+    val restoreDiff: String?,
+) {
+    companion object {
+        fun parse(result: ShellResult): RootDiagnosticEvidence {
+            fun section(name: String): String? {
+                val start = "[FLCLASH:$name:BEGIN]\n"
+                val end = "\n[FLCLASH:$name:END]"
+                if (start !in result.stdout || end !in result.stdout) return null
+                return result.stdout.substringAfter(start).substringBefore(end)
+            }
+            val outcome = "\ncollector exit=${result.exitCode} timeout=${result.timedOut}\n${result.stderr}"
+            return RootDiagnosticEvidence(
+                section("device").orEmpty() + outcome,
+                (section("network") ?: result.stdout) + outcome,
+                section("restore-diff"),
+            )
+        }
+    }
 }

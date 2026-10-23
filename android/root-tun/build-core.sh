@@ -31,6 +31,6 @@ case "$abi" in
         ;;
     *) echo 'Root TUN supports arm64-v8a and x86_64 only.' >&2; exit 64 ;;
 esac
-go build -tags with_gvisor -trimpath -ldflags '-s -w -X github.com/metacubex/mihomo/constant.Version=FlClash-root-native' \
+go build -tags with_gvisor -trimpath -ldflags '-s -w -extldflags=-Wl,-z,max-page-size=16384 -X github.com/metacubex/mihomo/constant.Version=FlClash-root-native' \
     -o "$output/libroot_mihomo.so.tmp" .
 mv "$output/libroot_mihomo.so.tmp" "$output/libroot_mihomo.so"

@@ -96,6 +96,8 @@ internal fun success(data: Any?): Map<String, Any?> = mapOf("ok" to true, "data"
 internal fun failure(
     code: RootCode,
     phase: String,
+    retryable: Boolean = code !in setOf(RootCode.ROOT_NOT_FOUND, RootCode.ROOT_MANAGER_UNSUPPORTED, RootCode.ANDROID_VERSION_UNSUPPORTED),
+    reason: String? = null,
 ): Map<String, Any?> =
     mapOf(
         "ok" to false,
@@ -103,8 +105,19 @@ internal fun failure(
         "error" to
             mapOf(
                 "code" to code.name,
-                "details" to mapOf("phase" to phase),
-                "retryable" to
-                    (code !in setOf(RootCode.ROOT_NOT_FOUND, RootCode.ROOT_MANAGER_UNSUPPORTED, RootCode.ANDROID_VERSION_UNSUPPORTED)),
+                "details" to
+                    buildMap {
+                        put("phase", phase)
+                        if (reason != null) put("reason", reason)
+                    },
+                "retryable" to retryable,
             ),
     )
+
+internal fun requireRequestId(value: Any?): String {
+    val requestId = value as? String ?: throw IllegalArgumentException("requestId is required")
+    require(
+        runCatching { UUID.fromString(requestId).toString() == requestId.lowercase() }.getOrDefault(false),
+    ) { "requestId must be a UUID" }
+    return requestId
+}

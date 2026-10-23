@@ -7,7 +7,9 @@ import com.follow.clash.root.TunState
 import io.flutter.embedding.engine.FlutterEngine
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Deferred
+import kotlinx.coroutines.suspendCancellableCoroutine
 import java.util.UUID
+import kotlin.coroutines.resume
 
 object ServiceState {
     private val machine = ServiceStateMachine(AndroidServiceStateHost)
@@ -15,6 +17,18 @@ object ServiceState {
         RootTunController(
             GlobalState.application,
             stopVpn = { machine.requestStop().await() && ServiceController.runtime == null },
+            requestNotificationPermission = {
+                suspendCancellableCoroutine { continuation ->
+                    val app = AndroidServiceStateHost.app()
+                    if (app == null) {
+                        continuation.resume(true)
+                    } else {
+                        app.requestNotificationPermission { permitted ->
+                            if (continuation.isActive) continuation.resume(permitted)
+                        }
+                    }
+                }
+            },
             selections = {
                 AndroidServiceStateHost
                     .loadSharedState()

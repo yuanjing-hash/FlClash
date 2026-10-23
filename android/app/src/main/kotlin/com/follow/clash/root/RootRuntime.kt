@@ -22,7 +22,14 @@ internal class RootRuntime(
     var didInstall: Boolean = false
         private set
 
-    fun status(): ShellResult = command("status")
+    fun status(): ShellResult =
+        shell.root(
+            "if [ ! -e $BASE ]; then echo disabled; " +
+                "elif [ ! -L $BASE/scripts/runtime.sh ] && [ -f $BASE/scripts/runtime.sh ]; then " +
+                "/system/bin/sh $BASE/scripts/runtime.sh status; " +
+                "else echo 'stopping CLEANUP_FAILED'; false; fi; result=\$?; " +
+                "if [ -f $AUTOSTART ]; then echo autostart:yes; else echo autostart:no; fi; exit \$result",
+        )
 
     fun attach(): Boolean {
         val existing = status()
@@ -145,6 +152,7 @@ internal class RootRuntime(
             )
         check(validation.success) { "Mihomo config validation failed; see validation.log" }
         if (!allowed()) return
+        write("config/root-tun-enabled", "1\n".toByteArray())
         check(command("start").success) { "Root supervisor failed to start" }
     }
 
@@ -160,11 +168,65 @@ internal class RootRuntime(
     fun delete(): Boolean {
         val retained =
             shell.root(
-                "for f in core.log validation.log watchdog.log transitions.log; do echo \"[\$f]\"; tail -c 131072 $BASE/logs/\$f 2>/dev/null; done",
+                "for f in core.log validation.log watchdog.log transitions.log boot.log; do echo \"[\$f]\"; tail -c 131072 $BASE/logs/\$f 2>/dev/null; done",
             )
         File(context.cacheDir, "root-tun-last-runtime.log").writeText(RootDiagnostics.redact(retained.stdout))
+        val retainedDiff = File.createTempFile("root-tun-restore-", ".txt", context.cacheDir)
+        try {
+            val copied =
+                shell.root(
+                    "if [ -f $BASE/logs/restore-diff.txt ]; then cat $BASE/logs/restore-diff.txt >${RootShell.quote(
+                        retainedDiff.path,
+                    )}; fi",
+                )
+            if (!copied.success || !retainedDiff.renameTo(File(context.cacheDir, "root-tun-restore-diff.txt"))) return false
+        } finally {
+            retainedDiff.delete()
+        }
         return shell.root("[ ! -L $BASE ] && [ -z \"\$(find $BASE -type l -print)\" ] && rm -rf $BASE").success
     }
+
+    fun autostartEnabled(): Boolean {
+        val result = shell.root("if [ -f $AUTOSTART ]; then echo yes; else echo no; fi")
+        check(result.success) { "Autostart state is unavailable" }
+        return result.stdout.trim() == "yes"
+    }
+
+    fun setAutostart(enabled: Boolean): Boolean {
+        val ownEntry =
+            "[ ! -L /data/adb/service.d ] && [ ! -L $AUTOSTART ] && " +
+                "{ [ ! -e $AUTOSTART ] || { [ -f $AUTOSTART ] && " +
+                "grep -qx '# flclash-root service.d v1' $AUTOSTART; }; }"
+        val result =
+            if (enabled) {
+                val entry = context.assets.open("root-tun/service.d.sh").use { it.readBytes() }
+                shell.root(
+                    "umask 077; $ownEntry && [ ! -L $BASE ] && [ -d $BASE/config ] && " +
+                        "[ -z \"\$(find $BASE -type l -print)\" ] && " +
+                        "[ -s $BASE/config/config.yaml ] && [ -f $BASE/scripts/runtime.sh ] && " +
+                        "[ \"\$(cat $BASE/config/root-tun-enabled)\" = 1 ] && " +
+                        "mkdir -p /data/adb/service.d && cat >$BASE/tmp/autostart-entry && " +
+                        "chmod 700 $BASE/tmp/autostart-entry && chown 0:0 $BASE/tmp/autostart-entry && " +
+                        "echo 1 >$BASE/config/autostart-enabled.tmp && chmod 600 $BASE/config/autostart-enabled.tmp && " +
+                        "mv $BASE/config/autostart-enabled.tmp $BASE/config/autostart-enabled && " +
+                        "mv $BASE/tmp/autostart-entry $AUTOSTART",
+                    2_500,
+                    entry,
+                )
+            } else {
+                shell.root(
+                    "$ownEntry && rm -f $AUTOSTART && " +
+                        "if [ -d $BASE/config ]; then [ ! -L $BASE ] && " +
+                        "[ -z \"\$(find $BASE -type l -print)\" ] && " +
+                        "echo 0 >$BASE/config/autostart-enabled.tmp && chmod 600 $BASE/config/autostart-enabled.tmp && " +
+                        "mv $BASE/config/autostart-enabled.tmp $BASE/config/autostart-enabled; fi",
+                    2_500,
+                )
+            }
+        return result.success
+    }
+
+    fun restoreDiffExists(): Boolean = shell.root("[ -s $BASE/logs/restore-diff.txt ]").success
 
     fun healthy(): Boolean {
         if (!status().success) return false
@@ -189,36 +251,16 @@ internal class RootRuntime(
         }.getOrDefault(false)
     }
 
-    fun diagnostics(): String {
-        val commands =
-            linkedMapOf(
-                "SELinux" to "getenforce",
-                "IPv4 rules" to "ip -4 rule show",
-                "IPv6 rules" to "ip -6 rule show",
-                "IPv4 routes" to "ip -4 route show table all",
-                "IPv6 routes" to "ip -6 route show table all",
-                "Links" to "ip link show",
-                "Addresses" to "ip addr show",
-                "iptables" to "iptables-save",
-                "ip6tables" to "ip6tables-save",
-                "VPN connectivity" to "dumpsys connectivity | grep -i -E 'vpn|TRANSPORT_VPN|lockdown'",
-                "Root state" to "cat $BASE/state/status $BASE/state/private-dns $BASE/run/*.pid",
-                "Core log" to "tail -c 262144 $BASE/logs/core.log",
-                "Previous core log" to "tail -c 131072 $BASE/logs/core.log.1",
-                "Validation log" to "tail -c 131072 $BASE/logs/validation.log",
-                "Watchdog log" to "tail -c 131072 $BASE/logs/watchdog.log",
-                "Transitions" to "tail -c 131072 $BASE/logs/transitions.log",
-                "Baseline" to "cat $BASE/state/baseline.*",
-            )
+    fun diagnostics(privileged: Boolean): RootDiagnosticEvidence {
+        val script = context.assets.open("root-tun/diagnostics.sh").use { it.readBytes() }
         val diagnosticShell = RootShell()
-        return buildString {
-            commands.forEach { (label, command) ->
-                val result = diagnosticShell.root(command, 2_000)
-                append("\n[$label] exit=${result.exitCode} timeout=${result.timedOut}\n")
-                append(result.stdout)
-                append(result.stderr)
+        val result =
+            if (privileged) {
+                diagnosticShell.root("/system/bin/sh", 9_000, script)
+            } else {
+                diagnosticShell.execute(listOf("sh"), 9_000, script)
             }
-        }
+        return RootDiagnosticEvidence.parse(result)
     }
 
     private fun install() {
@@ -322,6 +364,7 @@ internal class RootRuntime(
 
     companion object {
         const val BASE = "/data/adb/flclash-root"
+        private const val AUTOSTART = "/data/adb/service.d/flclash-root.sh"
         private const val MAX_CONFIG = 8L * 1024 * 1024
         private const val MAX_ASSET = 256L * 1024 * 1024
     }
