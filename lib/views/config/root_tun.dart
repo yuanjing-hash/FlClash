@@ -1,10 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
-import 'dart:isolate';
 
 import 'package:android_intent_plus/android_intent.dart';
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/root_tun_diagnostics.dart';
 import 'package:fl_clash/common/root_tun_labels.dart';
 import 'package:fl_clash/models/root_tun.dart';
 import 'package:fl_clash/plugins/root_tun.dart';
@@ -13,7 +12,6 @@ import 'package:fl_clash/views/root_tun_logs.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:path/path.dart' as p;
 
 class RootTunSection extends ConsumerStatefulWidget {
   const RootTunSection({super.key});
@@ -137,26 +135,10 @@ class _RootTunSectionState extends ConsumerState<RootTunSection>
       if (file == null) {
         throw MessageException(rootTunErrorLabel(result.error!.code, l));
       }
-      final root = await appPath.homeDirPath;
-      final localPath = await File(file.path).resolveSymbolicLinks();
-      final privatePath = await Directory(
-        p.dirname(root),
-      ).resolveSymbolicLinks();
-      if (!p.isWithin(privatePath, localPath)) {
-        throw const FormatException(
-          'Diagnostics must be in the app private directory',
-        );
-      }
-      if (await File(localPath).length() != file.sizeBytes) {
-        throw const FormatException('Diagnostics size mismatch');
-      }
-      final bytes = await Isolate.run(File(localPath).readAsBytesSync);
-      final saved = await picker.saveFile(
-        p.basename(localPath),
-        bytes,
-        mimeType: file.mimeType,
-      );
-      if (mounted && saved != null) await _explain(l.exportSuccess);
+      final saved = await RootTunDiagnosticsExporter(
+        isAndroid: system.isAndroid,
+      ).export(file, homeDirectory: await appPath.homeDirPath);
+      if (mounted && saved) await _explain(l.exportSuccess);
     } catch (error) {
       if (!mounted) return;
       if (error is RootTunChannelException) {

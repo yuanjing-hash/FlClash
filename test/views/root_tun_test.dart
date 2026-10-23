@@ -1,7 +1,5 @@
-import 'dart:async';
 import 'dart:io';
 
-import 'package:file_picker/file_picker.dart';
 import 'package:fl_clash/common/constant.dart';
 import 'package:fl_clash/models/root_tun.dart';
 import 'package:fl_clash/providers/app.dart';
@@ -18,34 +16,11 @@ import '../helpers/app_paths.dart';
 import '../helpers/test_app.dart';
 import '../support/root_tun.dart';
 
-class _SavingPicker extends FilePickerPlatform {
-  final saved = Completer<void>();
-  String? savedMimeType;
-  Uint8List? savedBytes;
-
-  @override
-  Future<Uri?> saveFile({
-    required String fileName,
-    required Uint8List bytes,
-    required String mimeType,
-    String? dialogTitle,
-    String? initialDirectory,
-    Function(FilePickerStatus)? onFileSaving,
-    WindowsOptions windowsOptions = const WindowsOptions(),
-    LinuxOptions linuxOptions = const LinuxOptions(),
-    WebOptions webOptions = const WebOptions(),
-  }) async {
-    savedMimeType = mimeType;
-    savedBytes = bytes;
-    saved.complete();
-    return null;
-  }
-}
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const methods = MethodChannel('$packageName/root_tun');
   const events = MethodChannel('$packageName/root_tun/events');
+  const share = MethodChannel('dev.fluttercommunity.plus/share');
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   late ProviderContainer container;
@@ -54,15 +29,16 @@ void main() {
   late String? autostartError;
   late Map<String, dynamic>? diagnostics;
   late Directory directory;
-  late FilePickerPlatform originalPicker;
-  late _SavingPicker savingPicker;
+  late List<MethodCall> shareCalls;
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('root_tun_view_');
     await useAppPaths(directory);
-    originalPicker = FilePickerPlatform.instance;
-    savingPicker = _SavingPicker();
-    FilePickerPlatform.instance = savingPicker;
+    shareCalls = [];
+    messenger.setMockMethodCallHandler(share, (call) async {
+      shareCalls.add(call);
+      return 'test.target';
+    });
     autostartError = null;
     diagnostics = null;
     container = ProviderContainer();
@@ -105,7 +81,7 @@ void main() {
     container.dispose();
     messenger.setMockMethodCallHandler(methods, null);
     messenger.setMockMethodCallHandler(events, null);
-    FilePickerPlatform.instance = originalPicker;
+    messenger.setMockMethodCallHandler(share, null);
     await directory.delete(recursive: true);
   });
 
@@ -215,28 +191,31 @@ void main() {
     });
   }
 
-  testWidgets('Flutter saves diagnostics with the native MIME type', (
-    tester,
-  ) async {
-    final file = File('${directory.path}/diagnostics.zip');
-    final bytes = Uint8List.fromList([80, 75, 3, 4]);
-    await tester.runAsync(() => file.writeAsBytes(bytes));
-    diagnostics = {
-      'path': file.path,
-      'sizeBytes': bytes.length,
-      'mimeType': 'application/x-zip-compressed',
-    };
-    await pump(tester);
-    await tester.ensureVisible(find.text('导出诊断日志'));
-    await tester.runAsync(() async {
-      await tester.tap(find.text('导出诊断日志'));
-      await savingPicker.saved.future.timeout(const Duration(seconds: 5));
-    });
-    await tester.pumpAndSettle();
-    expect(savingPicker.savedMimeType, diagnostics!['mimeType']);
-    expect(savingPicker.savedBytes, bytes);
-    expect(tester.takeException(), isNull);
-  });
+  testWidgets(
+    'diagnostic export is Android only and never opens a desktop save dialog',
+    (tester) async {
+      final file = File('${directory.path}/diagnostics.zip');
+      final bytes = Uint8List.fromList([80, 75, 3, 4]);
+      await tester.runAsync(() => file.writeAsBytes(bytes));
+      diagnostics = {
+        'path': file.path,
+        'sizeBytes': bytes.length,
+        'mimeType': 'application/x-zip-compressed',
+      };
+      await pump(tester);
+      await tester.ensureVisible(find.text('导出诊断日志'));
+      await tester.runAsync(() async {
+        await tester.tap(find.text('导出诊断日志'));
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      });
+      await tester.pumpAndSettle();
+      expect(calls.map((call) => call.method), contains('exportDiagnostics'));
+      expect(shareCalls, isEmpty);
+      expect(find.text('导出成功'), findsNothing);
+      expect(await tester.runAsync(file.exists), true);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets(
     'KernelSU awaitingAuth has manager guidance, recheck and cancel without a countdown',
