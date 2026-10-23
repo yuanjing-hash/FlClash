@@ -10,7 +10,7 @@
 
 ## 决策
 
-采用 **B：root 独立 mihomo 核心**。借鉴桌面入口新增 Android root 入口，编译 arm64/x86_64；核心自建 TUN、auto-route，agent 管理网络事务与生命周期，独立 root watchdog 兜底。App 经 Kotlin + Unix socket 控制/展示，保持 `${packageName}/core` 的 CoreMethodCall/CoreMethodResponse 不变，Flutter 不直连核心。防回环在 root 侧用核心 fwmark/出口规则，应用识别在 root 侧完成。
+采用 **B：root 独立 mihomo 核心**。借鉴桌面入口新增 Android root 入口，仅编译 arm64-v8a 和 x86_64（不出 armeabi-v7a）；核心自建 TUN、auto-route，agent 管理网络事务与生命周期，独立 root watchdog 兜底。App 经 Kotlin + Unix socket 控制/展示，保持 `${packageName}/core` 的 CoreMethodCall/CoreMethodResponse 不变，Flutter 不直连核心。防回环在 root 侧用核心 fwmark/出口规则，应用识别在 root 侧完成。
 
 首版只用一个 `/data/adb/service.d/flclash-root.sh` 薄入口，运行时文件均在 `/data/adb/flclash-root/`；关闭 Root 功能/卸载清空。改动优先新文件，现有生命周期与传输只留接缝，避免修改 mihomo。所有控制 socket 先用 SO_PEERCRED 校验 UID，异 App 拒绝并记日志。
 
@@ -29,4 +29,4 @@ B 支持无 App 冷启动及独立清理；代价是新增双 ABI root 产物、
 
 ## 验证条件
 
-首个真机环境是小米手机（Android 16，KernelSU），由老板安装 CI 产出的 arm64 debug APK 手动测试，不跑脚本或 adb；诊断信息全部通过 App 内「导出诊断日志」取得（ip rule、路由、tun 网卡、核心日志）。**真机上能开启 Root TUN、建出 tun 网卡并跑通代理流量，且关闭后规则与开启前一致，即视为 B 验证通过**；不以“编译成功”代替流量成功。若真机证明 B 不可行，本 ADR 改为 Superseded 并经项目经理评审下一步，不擅自放宽 US-13 AC1。其余待核实项（TDD W1–W6）仍是发布门槛；Magisk、APatch 及其他 Android 版本待后续设备补测。
+首个真机环境是小米 17 Pro Max（Android 17，KernelSU），由老板安装 CI 产出的 arm64 debug APK 手动测试，不跑脚本或 adb；诊断信息全部通过 App 内「导出诊断日志」取得（ip rule、路由、tun 网卡、核心日志）。**真机上能开启 Root TUN、建出 tun 网卡并跑通代理流量，且关闭后规则与开启前一致，即视为 B 验证通过**；不以“编译成功”代替流量成功。若真机证明 B 不可行，本 ADR 改为 Superseded 并经项目经理评审下一步，不擅自放宽 US-13 AC1。其余待核实项（TDD W1–W6）仍是发布门槛；Magisk、APatch 及其他 Android 版本待后续设备补测。

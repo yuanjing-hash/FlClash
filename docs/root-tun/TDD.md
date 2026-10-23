@@ -36,7 +36,7 @@
 | 安全 | fd/socket 身份、关闭归属需证明 | 常驻 root 面较大；固定命令、SO_PEERCRED、最小文件权限 |
 | 工作量 | 表面较小；满足冷启动必须增加原生宿主，收益消失 | 中等偏大；可复用 Go 方法分发、配置及统计 |
 
-推荐 B。基于 `core/cmd/core` 的结构新增 Android root 入口，交叉编译 `android/arm64`、`android/amd64`（APK ABI 为 x86_64）。**不是原样编译桌面入口**：增加可重连 IPC、无宿主也运行、root 模式 TUN 创建路径；不触发 gomobile 的 VPN hooks。优先新文件：`core/cmd/root-core/`、`core/root_*`、原生 `root/`、`RootTunPlugin`、Dart root 通道/模型、`scripts/root-tun/`；现有 ServiceState、ServicePlugin、Go lifecycle 只留模式/传输接缝，尽量不改 `Clash.Meta`。
+推荐 B。基于 `core/cmd/core` 的结构新增 Android root 入口，交叉编译 `android/arm64`、`android/amd64`，APK **仅出 arm64-v8a 和 x86_64**（不出 armeabi-v7a）。**不是原样编译桌面入口**：增加可重连 IPC、无宿主也运行、root 模式 TUN 创建路径；不触发 gomobile 的 VPN hooks。优先新文件：`core/cmd/root-core/`、`core/root_*`、原生 `root/`、`RootTunPlugin`、Dart root 通道/模型、`scripts/root-tun/`；现有 ServiceState、ServicePlugin、Go lifecycle 只留模式/传输接缝，尽量不改 `Clash.Meta`。
 
 ## 3. 路由与 DNS 接管
 
@@ -158,6 +158,35 @@ Snapshot 必填字段及类型（所有方法/事件共用）：
 | `setAutostart` | `{requestId,enabled:bool}` | Ack ≤1s，文件事务 ≤3s；成功状态事件更新开关；不隐含 start | AUTOSTART_FAILED、ROOT_PERMISSION_REVOKED；仅 Root 功能已启用且获权可设 true，否则参数/前提冲突，不能偷偷授权 |
 | `cleanupResidue`（P1） | `{requestId}` | Ack ≤1s，清理 ≤3s；运行中通过停止流程，按保存 journal 清理，关闭功能/自启 | CLEANUP_FAILED；尚未交付时 MethodNotImplemented，Flutter 隐藏入口 |
 | `getLogs` | `{cursor:String\|null,limit:int}`；默认 null/200，范围 1..500 | ≤2s，`{sourcePath:String,entries:[{cursor:String,at:int,level:debug\|info\|warn\|error,code:String\|null,message:String}],nextCursor:String\|null,eof:bool}`；按时间升序；失效游标从现存最早日志开始 | 读取失败为技术错误 CORE_ERROR（details.phase=readLogs），无新增业务码；目录已正常删除则成功空列表；sourcePath 仅诊断，Flutter 不直接读 root 文件 |
+| `exportDiagnostics` | `{requestId}` | 原生总耗时 ≤15s（root 采集 ≤10s + 打包），Dart 等待上限 **20s**；`{path:String,sizeBytes:int,mimeType:"application/zip"}`；不改变状态、不产生 Ack/intentRevision，详见下方「exportDiagnostics 契约」 | 无新增业务码；打包/写文件失败为技术错误 CORE_ERROR（details.phase=exportDiagnostics）；无 root/未授权/超时仍成功返回，缺失项在 zip 内注明 |
+
+#### exportDiagnostics 契约
+
+用途：首个真机环境只靠 App 内「导出诊断日志」取证（ADR-0001），因此 N1 起即为必备方法，Flutter mock 与原生实现都以本节为准。
+
+- **请求**：`{requestId:String}`（UUID）。同一 requestId 采集进行中重复调用，复用同一任务并返回同一结果；不同 requestId 并发时串行执行。
+- **成功**：`Result.ok=true`，`data={path:String,sizeBytes:int,mimeType:"application/zip"}`。`path` 是 App 私有目录 `cache/diagnostics/` 下的绝对路径（文件名 `flclash-root-diag-<UTC 时间>.zip`），只保留最近 3 份；`sizeBytes` 为最终 zip 字节数，上限 20MiB，超限时截断大日志并在 manifest 注明。
+- **失败**：统一 `Result/Error`：`ok=false,data=null,error={code:"CORE_ERROR",details:{phase:"exportDiagnostics",reason:"zipFailed|ioError|busy"},retryable:true}`。不新增 PRD 业务码，不写 lastErrorCode。**root 不可用、未授权、单项命令失败或总超时都不算失败**：照常返回 zip，缺失/超时项在 `manifest.json` 中标注。
+- **Kotlin 侧**：所有 root 项在 **一次 su 调用** 中由一个固定 POSIX sh 采集脚本完成（不拼接用户输入），**总超时 ≤10s**；超时即终止该 su 进程，已写出的部分照常打包。脚本把各项输出写到 `R/tmp/diag-<requestId>/`，结束后以 App UID 可读方式交给 Kotlin，Kotlin 读取后删除临时目录，再合并 App 侧信息、脱敏并打包 zip。禁止每项单独调用 su。
+- **Flutter 侧**：调用后等待上限 **20s**（§6.1 通用的 getter 3s / 命令 2s 对本方法不适用），拿到 `path` 后用系统分享面板（`share_plus` 等）发出文件，或保存到用户选择的位置；Flutter 不读 root 文件，只处理返回的 App 私有文件。超时提示「导出超时，请重试」，可用新 requestId 重试。
+- **脱敏**：token/secret/password/私钥/订阅 URL 查询串、代理节点服务器地址与 UUID 一律替换为 `[redacted]`；zip 内不含 `config.yaml` 原文，只含脱敏后的摘要。
+
+zip 内容（每项一个文件；`manifest.json` 记录每项的命令、exit code、耗时、是否超时/跳过）：
+
+| 文件 | 内容 |
+|---|---|
+| `manifest.json` | requestId、导出时间（UTC 毫秒）、App 版本/构建号/applicationId、APK ABI、各项采集结果 |
+| `system.txt` | 机型（`ro.product.model`/`ro.product.manufacturer`）、Android 版本与 SDK（`ro.build.version.release`/`ro.build.version.sdk`）、**安全补丁**（`ro.build.version.security_patch`）、`ro.build.fingerprint`、`getenforce` |
+| `kernel.txt` | `uname -a`、**PAGE_SIZE**（`getconf PAGE_SIZE`）、`/proc/version`、是否支持 `/dev/net/tun` |
+| `root.txt` | 识别到的 root 管理器与 **KernelSU 版本**（`ksud -V` 及内核侧版本号；Magisk 为 `magisk -V`/`magisk -c`，APatch 为对应版本），su 路径，授权状态 |
+| `state.txt` | 当前 Snapshot、`R/state/` 下状态文件、owned 资源清单、各进程 PID 与 startTicks、心跳文件 |
+| `network.txt` | `ip -4/-6 rule show`、`ip -4/-6 route show table all`、`ip link`/`ip addr`（含 flcrtun0）、`iptables-save`/`ip6tables-save`（含 FCR_OUTPUT）、私人 DNS 设置、`dumpsys connectivity` 中 VPN/lockdown 相关行 |
+| `baseline/` | 启动时保存的 `baseline.*` 快照 |
+| `restore-diff.txt` | 关闭/清理后与 `baseline.*` 的差异（规范化 iptables 计数器与注释后比较，为空即“与开启前一致”）；尚未关闭过则注明 |
+| `avc.txt` | SELinux 拒绝记录：`dmesg` 与 `logcat -d -b all` 中 `avc:` 相关行（最近 2000 行内过滤） |
+| `logs/` | `R/logs/` 下 runtime/supervisor/watchdog/core/boot 日志（脱敏、各取末尾 1MiB）、mihomo 校验日志 |
+| `app.txt` | App 侧 RootTun 日志与最近 256 条状态事件 |
+
 
 同步业务前提失败（如 start 未检测到 root）返回 ok=false 并按状态机更新快照；授权拒绝/实际启动失败在 Ack 之后用事件报告。参数非法或状态不允许时，用 `PlatformException('INVALID_ARGUMENT',…,details)`；setAutostart(true) 在功能关闭/尚未授权时分别 details.reason=ROOT_TUN_DISABLED/AUTH_REQUIRED，已确认撤权则按表返回业务错误。通道/IO不可用用 `PlatformException('CORE_ERROR',…,{'phase':…})`，技术错误不加入 PRD 用户错误码，也不写 lastErrorCode；Flutter 捕获后重新 getState，不把通信失败当作 disabled。所有方法后台 IO/su/socket；只有 EventSink/Activity 交互回主线程。Dart RPC 等待上限 getter 3s、命令 2s，**超时不取消命令**；用同 requestId 重试或 getState。授权/启动/恢复计时归原生/root 单调时钟，取消须 stop(cancelAuth)。
 
@@ -246,6 +275,69 @@ manifest.json 必填 `{schemaVersion:1,configRevision:String,appUid:int,rootMana
 
 agent 正常为唯一写者，watchdog 发现失联后拿 owner.lock、作代际检查、恢复 agent 或执行 journal；心跳失效但进程仍持锁时，先核验 PID+startTicks 并终止该已记录进程，不无限等锁。接管先增加 intentRevision 防止旧进程回写；无残留时 Kotlin 可直接构造 disabled 快照，不为 getState 重建 R。
 
+### 6.4 实现偏差记录（N1 / #22 相对本文的偏差）
+
+N1 的目标是先出一个可手测的 debug APK，用来验证方案 B 是否可行。以下偏差已知并且已经登记；每条都写明了原因、风险和验收条件。偏差没有消除之前，不得在文档或 Release 里宣称已符合 §6.3 / §4。
+
+**偏差 1：控制通道用 127.0.0.1 TCP 随机端口加 token，没有用 §6.3 的抽象 socket**
+
+- **现状**：Kotlin 直接连接 root 侧 mihomo 的 `external-controller`。
+  - 监听地址是 `127.0.0.1:<随机端口>`。每次启动时用 `ServerSocket(0)` 选一个空闲端口，写入 `R/config/controller.port`。
+  - 鉴权用 HTTP `Authorization: Bearer <token>`。token 是每次启动生成的随机 UUID，作为 mihomo 的 `secret`。
+  - Kotlin 通过 su 读取端口和 token。
+  - 所有入站代理端口（port、socks、mixed、redir、tproxy）都设为 0，`bind-address` 是 127.0.0.1。
+  - 没有 root-agent，也没有 `@com.follow.clash.root.control.v1` 和 SO_PEERCRED 校验。
+- **原因**：
+  - 复用 mihomo 现成的控制接口，N1 不需要先写 root-agent 和 socket 服务端，可以尽快在真机上验证建 TUN 和跑通流量。
+  - 抽象 socket 在 untrusted_app 和 su 域之间的 SELinux `stream_connect` 还没有在 Android 17 / KernelSU 上核实（W1），先用 TCP 回环避开这个未知项。
+- **风险**：
+  - 本机任何 App（任意 UID）都能连上这个端口，也能通过扫端口发现它。服务端只认 token，不认调用方 UID。
+  - token 一旦泄露（日志、诊断包、内存转储），其他 App 就能读取连接或流量信息、切换节点、修改规则，甚至让核心停止服务。
+  - 连接洪泛有可能拖垮控制面。
+  - 流量只在回环上传输，不出设备。
+- **缓解**：
+  - 只绑定 127.0.0.1，不监听 0.0.0.0 或 ::。
+  - 端口每次启动随机选取，token 是 122 bit 随机数。
+  - 不开放任何入站代理端口。
+  - `R/config` 仅 root 可读（0600 / 0700）。
+  - 日志和诊断导出对 token 脱敏。
+  - Kotlin 的连接和读取超时都是 300ms。
+- **验收条件**（每个手测包都要满足，用诊断包证明）：
+  - ① `ss -ltnp` 或 `/proc/net/tcp*` 显示控制端口只监听在 127.0.0.1，其余入站端口都不存在。
+  - ② 不带 token 或 token 错误的请求返回 401。
+  - ③ 两次启动的端口和 token 都不相同。
+  - ④ 日志和诊断 zip 里搜不到 token 原文。
+  - ⑤ `R/config` 的属主和权限符合上面的缓解要求。
+- **去留**：发布 GitHub Release 之前，必须二选一，由项目经理评审：
+  - 迁移到 §6.3 的抽象 socket 加 SO_PEERCRED（或者同等的按 UID 认证）；
+  - 修订 ADR-0001，正式接受 TCP 加 token，并补上调用方 UID 校验的替代方案。
+
+**偏差 2：崩溃恢复期间存在直连窗口**
+
+- **现状**：`runtime.sh supervise` 发现 core 死亡后，按 `cleanup → install_rules → launch_core` 的顺序恢复。
+  - 第一步就把规则全部拆掉，所以从 cleanup 到新 core 起来、规则重新装上的这段时间里，流量绕过代理直连。
+  - 这段时间内 DNS 和 IPv6 防漏规则也一起失效。
+  - 窗口长度通常有几秒，最长可到 core 启动超时。
+  - 这与 §4“先保留接管规则；不能恢复再拆规则 fail-open”不一致。
+- **风险**：恢复期间，各 App 的真实 IP 和 DNS 查询会直接发出，违背 US-05 / US-08 的“不泄露”要求。不过网络始终可用，不会断网。
+- **验收条件**：
+  - 手测包允许存在这个窗口，但 supervisor 日志必须记录窗口的开始和结束时间（单调时钟）与持续时长，诊断包里要能看到。
+  - 30s 恢复预算和第 3 次 / 5min 熔断照常执行。
+- **消除**：随 #25 一起修改，**合入 main 前必须完成**。目标行为：
+  - 恢复期间保留接管规则和防漏规则，让流量 fail-closed，只重启 core。
+  - 恢复失败时才执行 cleanup，fail-open 并进入 `failed`。
+
+**偏差 3：诊断采集方式**
+
+- **现状**：#22 现在按大约 17 次独立 su 调用采集诊断，每次超时 2s。
+- **要求**：改为按上面的 exportDiagnostics 契约，一次 su 完成采集，总超时 ≤10s，返回 `{path,sizeBytes,mimeType}`。
+- **完成时机**：在 #22 / #23 的返工里完成，不留到后续 PR。
+
+**偏差 4：没有独立 root-agent 和 watchdog**
+
+- **现状**：生命周期监督只有一个 sh 进程。
+- **处理**：由 P0 后续项 #25 补齐，见 §10。
+
 ## 7. PRD P0 AC → 设计点 → 测试
 
 范围含 US-01..17a 中所有 P0；US-12 与 US-16 AC4 为 P1，不混作 P0。
@@ -283,14 +375,14 @@ QA 矩阵：A10 Magisk；A12 Magisk/KernelSU；A14、A15 三家；各版本无 r
 
 | 负责人 / 任务 | 分支 | 依赖 / 验收产物 |
 |---|---|---|
-| Android N1：B 最小可用实现（建TUN/流量/SELinux/出口，含 App 内导出诊断日志） | `feature/N1-root-tun-core` | 无；小米 Android 16 + KernelSU 真机经 debug APK 手测，以导出的诊断日志为证据，回填 W1/R2 |
+| Android N1：B 最小可用实现（建TUN/流量/SELinux/出口，含 App 内导出诊断日志） | `feature/N1-root-tun-core` | 无；小米 17 Pro Max（Android 17，KernelSU）真机经 debug APK 手测，以导出的诊断日志为证据，回填 W1/R2 |
 | Android N2：root入口、agent、认证/数据桥/配置stage | `feature/N2-root-tun-backend` | N1；双ABI、Core契约兼容、异UID拒绝、重连不杀核心/不重建TUN |
 | Android N3：网络事务、DNS/IPv6、回环与还原 | `feature/N3-root-tun-routing` | N1/N2；US-01..08、快照完全还原、失败注入 |
 | Android N4：ServiceState接缝、授权/互斥/原生通知 | `feature/N4-root-tun-lifecycle` | N2；US-04/09/11、磁贴/通知/Always-on、W3/W4闭环 |
-| Android N5：独立看门狗、service.d、升级/卸载清理 | `feature/N5-root-tun-autostart` | N2/N3/N4；US-07/13..16，shellcheck，W5闭环 |
+| Android N5：独立看门狗、service.d、升级/卸载清理、撤权检测（#25 #26 #28 #29） | `feature/N5-root-tun-autostart` | N2/N3/N4；US-07/13..16，shellcheck，W5闭环 |
 | Flutter F1：通道模型、fake及断线/补发处理 | `feature/F1-root-tun-channel` | 本契约即可开工；八态/两授权流程/开机后attach，无进程位置假设 |
 | Flutter F2：开关、状态/前提、错误码文案与设置入口 | `feature/F2-root-tun-ui` | F1、联调N4/N5；US-10/15/17a，附录B所有位置，系统通知不由Dart承担 |
-| DevOps D1：双ABI核心产物、包名/签名/CI | `feature/D1-root-tun-build` | N1/N2；applicationId独立、常量不变，Go/Kotlin/Flutter/Shell检查，构建v0.9.1-root.1，密钥仅Secrets |
+| DevOps D1：双ABI（仅 arm64-v8a 和 x86_64）核心产物、包名/签名/CI | `feature/D1-root-tun-build` | N1/N2；applicationId独立、常量不变，Go/Kotlin/Flutter/Shell检查，构建v0.9.1-root.1，密钥仅Secrets |
 | DevOps D2：上游同步与发布门禁 | `feature/D2-root-tun-release` | D1/Q2；一周内同步演练、非Root回归、GitHub Release清单；发布需项目经理转达审批 |
 | QA Q1：矩阵、mock/故障/泄露与快照用例 | `feature/Q1-root-tun-test-plan` | 本文；表§7逐AC用例、Q1/Q2口径提交项目经理 |
 | QA Q2：实机矩阵与长稳/升级验收 | `feature/Q2-root-tun-acceptance` | N3..N5/F2/D1/Q1；全部P0证据、≥两root方案、24h/性能报告及DoD |
@@ -303,7 +395,7 @@ PRD 疑问（提交项目经理，不自行改冻结范围）：**Q1** 网络切
 
 | 编号 | 项目 / 负责与退出证据 |
 |---|---|
-| W1 | B 在 KernelSU 真机（小米 Android 16）上建TUN/流量；SELinux执行、netlink、SO_MARK及抽象socket连接；候选表/优先级/mark与netd冲突、WG/HY2/VLESS全出站防回环；A的跨域SCM_RIGHTS fd可用性。Android N1；保留命令/AVC/流量与还原证据，A只作比较不阻塞B。 |
+| W1 | B 在小米 17 Pro Max（Android 17，KernelSU）真机上建TUN/流量；SELinux执行、netlink、SO_MARK及抽象socket连接；候选表/优先级/mark与netd冲突、WG/HY2/VLESS全出站防回环；A的跨域SCM_RIGHTS fd可用性。Android N1；保留命令/AVC/流量与还原证据，A只作比较不阻塞B。 |
 | W2 | root INET_DIAG/procfs UID→包名在矩阵上的识别率、include-uid内核支持；M2包名过滤空实现不计已支持。Android N2+QA；当前 [process_linux.go](https://github.com/chen08209/Clash.Meta/blob/8380d0e7462f061a964323e9bf3129a236fcc5d5/component/process/process_linux.go) 有Android回退逻辑，但权限/共享UID显示待测，不扩首版分应用范围。 |
 | W3 | 三家无弹窗授权探测、运行中撤权≤5s及boot有效授权验证；KSU/APatch管理器入口兼容。Android N4/N5；不能以root daemon UID代替用户授权。 |
 | W4 | 无App/引擎的系统通知与停止入口、Android后台限制/通知权限、私人DNS自动853回退及切换监听、DNS/IPv6防漏、开机解锁60s、切网10s。Android+QA；不借启动VpnService满足。 |
@@ -311,3 +403,17 @@ PRD 疑问（提交项目经理，不自行改冻结范围）：**Q1** 网络切
 | W6 | US-02 AC2：其他VPN/官方FlClash并行及Always-on lockdown行为。Android N1+QA，按PRD R2回填，首版不承诺共存流量策略。 |
 
 ADR 已采纳 B（待真机验证）：N1 在 KernelSU 真机上成功建 TUN 并跑通流量即视为验证通过；W1 其余项与 W2–W5 是开发/发布门槛，不能随 ADR Accepted 一并宣称通过。若真机验证不通过，ADR 改为 Superseded 并交项目经理评审，不直接切回违反 US-13 AC1 的原案 A。
+
+## 10. P0 后续项（合入 main 前必须补齐）
+
+经牛马CEO 确认：本轮（#22 原生、#23 Flutter）**先出可手测的 debug APK 验证方案 B**。下面 4 项 P0 拆到后续 PR 完成，但 **`feature/root-tun-*` 合入 main 之前必须全部完成并通过各自的验收标准**，否则不得合入。
+
+| # | Issue | 内容 | 关联 AC |
+|---|---|---|---|
+| 1 | [#25](https://github.com/yuanjing-hash/FlClash/issues/25) | 独立看门狗：与 supervisor 之间没有父子死亡联动，每 1s 检查一次心跳，失联时接管或清理；同时消除偏差 2 的直连窗口 | US-07 AC1/AC3 |
+| 2 | [#26](https://github.com/yuanjing-hash/FlClash/issues/26) | 卸载检测：每 10s 精确检查 `com.follow.clash.root` 和 `/data/data/com.follow.clash.root`，连续 2 次不存在就清理，并删除入口和 R；卸载官方版 `com.follow.clash` 永远不触发 | US-16 AC1/AC2/AC3/AC5 |
+| 3 | [#28](https://github.com/yuanjing-hash/FlClash/issues/28) | service.d 自启：POSIX sh、幂等，等待 `sys.boot_completed` 后读取 `$R/config` 决定是否启动；Kotlin 的 `setAutostart` 只写入或删除自己的入口文件；`stop(proxyStop)` 保留自启 | US-13 AC1–AC4、US-14 AC1–AC3 |
+| 4 | [#29](https://github.com/yuanjing-hash/FlClash/issues/29) | 授权撤销检测：App 侧每 ≤5s 做一次 su 探测，root 侧按管理器的授权记录判断；撤销后清理、关闭自启，报 `ROOT_PERMISSION_REVOKED` / `AUTOSTART_ROOT_REVOKED` | US-11 AC3 |
+
+偏差 1（控制通道）的去留不在上面 4 项里，按 §6.4 的规定在发布前评审。偏差 3（诊断采集）在本轮返工中完成。
+
