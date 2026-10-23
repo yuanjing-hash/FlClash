@@ -283,7 +283,7 @@ QA 矩阵：A10 Magisk；A12 Magisk/KernelSU；A14、A15 三家；各版本无 r
 
 | 负责人 / 任务 | 分支 | 依赖 / 验收产物 |
 |---|---|---|
-| Android N1：B 最小可用实现（建TUN/流量/SELinux/出口，含 App 内导出诊断日志） | `feature/N1-root-tun-core` | 无；小米 Android 16 + KernelSU 真机经 debug APK 手测，以导出的诊断日志为证据，回填 W1/R2 |
+| Android N1：B 最小可用实现（建TUN/流量/SELinux/出口，含 App 内导出诊断日志） | `feature/N1-root-tun-core` | 无；小米 17 Pro Max（Android 17，KernelSU）真机经 debug APK 手测，以导出的诊断日志为证据，回填 W1/R2 |
 | Android N2：root入口、agent、认证/数据桥/配置stage | `feature/N2-root-tun-backend` | N1；双ABI、Core契约兼容、异UID拒绝、重连不杀核心/不重建TUN |
 | Android N3：网络事务、DNS/IPv6、回环与还原 | `feature/N3-root-tun-routing` | N1/N2；US-01..08、快照完全还原、失败注入 |
 | Android N4：ServiceState接缝、授权/互斥/原生通知 | `feature/N4-root-tun-lifecycle` | N2；US-04/09/11、磁贴/通知/Always-on、W3/W4闭环 |
@@ -303,7 +303,7 @@ PRD 疑问（提交项目经理，不自行改冻结范围）：**Q1** 网络切
 
 | 编号 | 项目 / 负责与退出证据 |
 |---|---|
-| W1 | B 在 KernelSU 真机（小米 Android 16）上建TUN/流量；SELinux执行、netlink、SO_MARK及抽象socket连接；候选表/优先级/mark与netd冲突、WG/HY2/VLESS全出站防回环；A的跨域SCM_RIGHTS fd可用性。Android N1；保留命令/AVC/流量与还原证据，A只作比较不阻塞B。 |
+| W1 | B 在小米 17 Pro Max（Android 17，KernelSU）真机上建TUN/流量；SELinux执行、netlink、SO_MARK及抽象socket连接；候选表/优先级/mark与netd冲突、WG/HY2/VLESS全出站防回环；A的跨域SCM_RIGHTS fd可用性。Android N1；保留命令/AVC/流量与还原证据，A只作比较不阻塞B。 |
 | W2 | root INET_DIAG/procfs UID→包名在矩阵上的识别率、include-uid内核支持；M2包名过滤空实现不计已支持。Android N2+QA；当前 [process_linux.go](https://github.com/chen08209/Clash.Meta/blob/8380d0e7462f061a964323e9bf3129a236fcc5d5/component/process/process_linux.go) 有Android回退逻辑，但权限/共享UID显示待测，不扩首版分应用范围。 |
 | W3 | 三家无弹窗授权探测、运行中撤权≤5s及boot有效授权验证；KSU/APatch管理器入口兼容。Android N4/N5；不能以root daemon UID代替用户授权。 |
 | W4 | 无App/引擎的系统通知与停止入口、Android后台限制/通知权限、私人DNS自动853回退及切换监听、DNS/IPv6防漏、开机解锁60s、切网10s。Android+QA；不借启动VpnService满足。 |
