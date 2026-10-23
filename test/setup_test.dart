@@ -11,6 +11,20 @@ void main() {
       expect(results.rest, ['android']);
     });
 
+    test('accepts several Android architectures', () {
+      final results = setup.createSetupArgParser().parse([
+        'android',
+        '--arch',
+        'arm64,amd64',
+      ]);
+
+      expect(results['arch'], ['arm64', 'amd64']);
+      expect(
+        setup.createAndroidTargetPlatform(results['arch'] as List<String>),
+        'android-arm64,android-x64',
+      );
+    });
+
     test('accepts dev application environment', () {
       final results = setup.createSetupArgParser().parse([
         'android',

@@ -68,7 +68,7 @@ Future<void> main(List<String> args) async {
   }
   final arch = _detectArch();
   final targets = createPackageTargets(platform, results['targets']);
-  final androidArch = results['arch'] as String?;
+  final androidArchs = results['arch'] as List<String>;
   final verbose = results['verbose'] as bool;
 
   final exitCode = await _package(
@@ -77,7 +77,7 @@ Future<void> main(List<String> args) async {
     targets,
     rootDir,
     arch,
-    androidArch: androidArch,
+    androidArchs: androidArchs,
     verbose: verbose,
   );
   exit(exitCode);
@@ -96,11 +96,11 @@ ArgParser createSetupArgParser() {
       valueHelp: 'exe,zip,dmg,apk,...',
       help: 'Package targets (default: all for platform)',
     )
-    ..addOption(
+    ..addMultiOption(
       'arch',
       valueHelp: 'arm,arm64,amd64',
       allowed: ['arm', 'arm64', 'amd64'],
-      help: 'Target architecture (Android only)',
+      help: 'Target architectures, comma-separated (Android only; default: all)',
     )
     ..addFlag(
       'verbose',
@@ -122,6 +122,11 @@ List<String> createFlutterBuildArgs({
     flutterBuildArgs.add('split-per-abi');
   }
   return flutterBuildArgs;
+}
+
+/// Flutter `--target-platform` value for the given Android architectures.
+String createAndroidTargetPlatform(List<String> archs) {
+  return archs.map((arch) => _androidFlutterTarget[arch]!).join(',');
 }
 
 Map<String, String> createBuildEnvironment(String env) {
@@ -160,7 +165,7 @@ Future<int> _package(
   String targets,
   String rootDir,
   String arch, {
-  String? androidArch,
+  List<String> androidArchs = const [],
   required bool verbose,
 }) async {
   final file = File(p.join(rootDir, 'env.json'));
@@ -204,8 +209,8 @@ Future<int> _package(
       platform,
       '--targets',
       targets,
-      if (androidArch != null)
-        '--build-target-platform=${_androidFlutterTarget[androidArch]!}',
+      if (androidArchs.isNotEmpty)
+        '--build-target-platform=${createAndroidTargetPlatform(androidArchs)}',
       if (flutterBuildArgs.isNotEmpty)
         '--flutter-build-args=${flutterBuildArgs.join(',')}',
       ...descriptionArgs,
