@@ -321,7 +321,8 @@ jobs:
 
   build:
     name: Android APK
-    if: github.repository == 'yuanjing-hash/FlClash' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    # Every push (any branch or v* tag) and manual runs build APKs; PR events reuse the branch push run.
+    if: github.repository == 'yuanjing-hash/FlClash' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     outputs:
       stable: ${{ steps.version.outputs.stable }}
