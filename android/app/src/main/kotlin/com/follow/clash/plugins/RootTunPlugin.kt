@@ -60,7 +60,16 @@ class RootTunPlugin :
                             success(backend.getLogs(args["cursor"] as? String, limit))
                         }
                         "exportDiagnostics" -> {
-                            success(backend.exportDiagnostics(args["requestId"]))
+                            val requestId = args["requestId"]
+                            if (requestId !is String || requestId.isBlank()) {
+                                result.error(
+                                    "INVALID_ARGUMENT",
+                                    "requestId must be a non-empty string",
+                                    mapOf("phase" to "exportDiagnostics"),
+                                )
+                                return@launch
+                            }
+                            success(backend.exportDiagnostics(requestId))
                         }
                         else -> {
                             result.notImplemented()

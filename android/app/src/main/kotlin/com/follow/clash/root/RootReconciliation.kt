@@ -22,9 +22,11 @@ internal object RootReconciliation {
                 ?.let { runCatching { TunState.fromWire(it) }.getOrNull() }
         val auth = if (status != null && !status.success && runtimeState == null) "notGranted" else root.auth
         val active = setOf(TunState.STARTING, TunState.RUNNING, TunState.RECOVERING)
+        val startIntent = cached.rootTunEnabled || runtimeState in active
         val state =
             when {
                 prerequisite -> TunState.DEGRADED
+                auth != "granted" && !startIntent -> TunState.DISABLED
                 auth != "granted" -> TunState.AWAITING_AUTH
                 runtimeState == null || (runtimeState in active && status.success != true) -> TunState.STOPPING
                 else -> runtimeState
@@ -32,6 +34,7 @@ internal object RootReconciliation {
         val code =
             when {
                 prerequisite -> root.error?.name
+                state == TunState.DISABLED && auth != "granted" -> null
                 auth != "granted" ->
                     if (root.manager == "magisk") RootCode.ROOT_PERMISSION_DENIED.name else RootCode.ROOT_GRANT_REQUIRED_IN_MANAGER.name
                 state == TunState.STOPPING -> RootCode.CLEANUP_FAILED.name

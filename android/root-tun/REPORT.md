@@ -131,4 +131,7 @@ flutter build apk --debug --target-platform android-arm64,android-x64
 
 ## 提交与交付
 
-本轮未 push。已尝试先提交构建组：`git add` 即失败，无法创建 `/workspace/FlClash/.git/worktrees/android/index.lock`（Read-only file system），因此未产生新提交，HEAD 保持 `4fa3749`，未修改作者配置。按约定保留工作区全部改动并导出 `out/root-tun-native-2.patch`（含新增文件），可在可写 checkout 按诊断契约、状态/启动/自启、还原证据、构建与文档分组提交，使用 Conventional Commits。不得把本机核心 ELF 或临时验证桩当作已构建 APK。
+- 返工提交：`77f62e6`（feature/root-tun-native），已推送，并合入 feature/root-tun-integration（`9246550`）。
+- 复审修正（N1 未授权且无启动意图时保持 disabled、N2 exportDiagnostics 校验 requestId、N3 本节）：紧随 `77f62e6` 的下一个提交，以 feature/root-tun-native 分支 HEAD 为准。
+- 本机验证：Kotlin 编译、18 项 JVM 单测（宿主类使用临时桩）、shellcheck、ktlint 通过；完整 APK 由 CI 构建，未在本机产出。
+- 未做：独立看门狗、卸载检测、授权撤销检测（B2 P0），留后续 PR；真机手测待进行。
