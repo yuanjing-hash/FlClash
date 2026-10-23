@@ -49,7 +49,7 @@ internal object RootReconciliation {
         return cached.copy(
             state = state,
             rootManager = root.manager,
-            authStatus = auth,
+            authStatus = if (status != null && "auth:revoked" in status.stdout) "revoked" else auth,
             stale = false,
             mode = if (state in active) "rootTun" else cached.mode,
             rootTunEnabled = state in active || cached.rootTunEnabled,
