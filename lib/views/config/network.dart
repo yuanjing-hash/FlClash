@@ -6,6 +6,7 @@ import 'package:fl_clash/features/form/form.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/views/config/override.dart';
+import 'package:fl_clash/views/config/root_tun.dart';
 import 'package:fl_clash/views/config/tun.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
@@ -590,7 +591,7 @@ class NetworkListView extends StatelessWidget {
         horizontal: 16,
       ).copyWith(top: context.contentTopPadding, bottom: 16),
       children: [
-        if (system.isAndroid) const VpnSections(),
+        if (system.isAndroid) ...[const VpnSections(), const RootTunSection()],
         if (system.isDesktop) const SystemProxySection(),
         const NetworkOptionsSection(),
         TunSection(

@@ -75,6 +75,7 @@ dependencies:
     path: plugins/rust_api
   setup:
     path: plugins/setup
+  android_intent_plus: ^6.1.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

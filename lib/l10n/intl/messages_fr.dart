@@ -202,38 +202,49 @@ class MessageLookup extends MessageLookupByLibrary {
   static String m68(count, label) =>
       "${Intl.plural(count, one: '1 groupe de proxys', other: '${label} groupes de proxys')}";
 
-  static String m69(count, label) =>
+  static String m69(seconds) =>
+      "Waiting for root authorization: ${seconds} seconds remaining";
+
+  static String m70(manager) =>
+      "Root permission is still unavailable. Check that FlClash Root is authorized in ${manager}.";
+
+  static String m71(manager) =>
+      "Grant root access to FlClash Root (com.follow.clash.root) in ${manager}. Return here and tap “I have authorized, check again”.";
+
+  static String m72(error) => "Diagnostic export failed: ${error}";
+
+  static String m73(count, label) =>
       "${Intl.plural(count, one: '1 règle', other: '${label} règles')}";
 
-  static String m70(appName) => "${appName} (mode sans échec)";
-
-  static String m71(count) =>
-      "${Intl.plural(count, one: '1 seconde', other: '${count} secondes')}";
-
-  static String m72(count) => "${count} actifs";
-
-  static String m73(count) =>
-      "${Intl.plural(count, one: '1 problème', other: '${count} problèmes')}";
-
-  static String m74(time) => "Vérifié à ${time}";
+  static String m74(appName) => "${appName} (mode sans échec)";
 
   static String m75(count) =>
+      "${Intl.plural(count, one: '1 seconde', other: '${count} secondes')}";
+
+  static String m76(count) => "${count} actifs";
+
+  static String m77(count) =>
+      "${Intl.plural(count, one: '1 problème', other: '${count} problèmes')}";
+
+  static String m78(time) => "Vérifié à ${time}";
+
+  static String m79(count) =>
       "${Intl.plural(count, one: '1 réglage', other: '${count} réglages')}";
 
-  static String m76(link) => "Aucun proxy n’a pu être lu dans ${link}";
+  static String m80(link) => "Aucun proxy n’a pu être lu dans ${link}";
 
-  static String m77(label) => "${label} doit être un seul élément";
+  static String m81(label) => "${label} doit être un seul élément";
 
-  static String m78(value) => "Pic ${value}";
+  static String m82(value) => "Pic ${value}";
 
-  static String m79(value) => "Total ${value}";
+  static String m83(value) => "Total ${value}";
 
-  static String m80(label) => "${label} doit être une URL";
+  static String m84(label) => "${label} doit être une URL";
 
-  static String m81(count) =>
+  static String m85(count) =>
       "${Intl.plural(count, one: 'il y a 1 an', other: 'il y a ${count} ans')}";
 
-  static String m82(count) =>
+  static String m86(count) =>
       "${Intl.plural(count, other: 'il y a ${count} a')}";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
@@ -1549,6 +1560,171 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "result": MessageLookupByLibrary.simpleMessage("Résultat"),
     "retry": MessageLookupByLibrary.simpleMessage("Réessayer"),
+    "rootTun": MessageLookupByLibrary.simpleMessage("Root TUN"),
+    "rootTunAuth": MessageLookupByLibrary.simpleMessage("Authorization"),
+    "rootTunAuthCountdown": m69,
+    "rootTunAuthDenied": MessageLookupByLibrary.simpleMessage("Denied"),
+    "rootTunAuthGranted": MessageLookupByLibrary.simpleMessage("Authorized"),
+    "rootTunAuthNotGranted": MessageLookupByLibrary.simpleMessage(
+      "Not authorized",
+    ),
+    "rootTunAuthRevoked": MessageLookupByLibrary.simpleMessage("Revoked"),
+    "rootTunAuthUnknown": MessageLookupByLibrary.simpleMessage("Unknown"),
+    "rootTunAuthorizedRecheck": MessageLookupByLibrary.simpleMessage(
+      "I have authorized, check again",
+    ),
+    "rootTunAutostart": MessageLookupByLibrary.simpleMessage("Start at boot"),
+    "rootTunChannel": MessageLookupByLibrary.simpleMessage(
+      "Channel availability",
+    ),
+    "rootTunChannelAvailable": MessageLookupByLibrary.simpleMessage(
+      "Available",
+    ),
+    "rootTunCleanup": MessageLookupByLibrary.simpleMessage(
+      "Clean up Root TUN residue",
+    ),
+    "rootTunDiagnostics": MessageLookupByLibrary.simpleMessage("Diagnostics"),
+    "rootTunErrorAlwaysOnVpnConflict": MessageLookupByLibrary.simpleMessage(
+      "FlClash is configured as an always-on VPN, which conflicts with Root TUN. FlClash will use Root TUN. Turn off “Always-on VPN” and “Block connections without VPN” in system settings to avoid losing connectivity.",
+    ),
+    "rootTunErrorAndroidVersionUnsupported":
+        MessageLookupByLibrary.simpleMessage(
+          "Root TUN requires Android 10 or later.",
+        ),
+    "rootTunErrorAutostartFailed": MessageLookupByLibrary.simpleMessage(
+      "Autostart failed (network unavailable or configuration unreadable). The network remains direct.",
+    ),
+    "rootTunErrorAutostartRootRevoked": MessageLookupByLibrary.simpleMessage(
+      "Autostart failed: root permission was revoked. The network remains direct.",
+    ),
+    "rootTunErrorCleanupFailed": MessageLookupByLibrary.simpleMessage(
+      "Root TUN rules could not be fully cleaned up. Connectivity may be affected.",
+    ),
+    "rootTunErrorCoreCrashLoop": MessageLookupByLibrary.simpleMessage(
+      "The proxy core crashed three times in five minutes. Automatic retries stopped and direct connectivity was restored.",
+    ),
+    "rootTunErrorCoreCrashedRecovering": MessageLookupByLibrary.simpleMessage(
+      "The proxy core exited unexpectedly. Recovering automatically…",
+    ),
+    "rootTunErrorCoreRecovered": MessageLookupByLibrary.simpleMessage(
+      "The proxy recovered automatically.",
+    ),
+    "rootTunErrorCoreRecoveryFailed": MessageLookupByLibrary.simpleMessage(
+      "Automatic recovery failed. Direct connectivity was restored; traffic is unproxied.",
+    ),
+    "rootTunErrorCoreStartFailed": MessageLookupByLibrary.simpleMessage(
+      "The proxy core could not start. Check the configuration.",
+    ),
+    "rootTunErrorDnsTakeoverFailed": MessageLookupByLibrary.simpleMessage(
+      "DNS takeover failed. Root TUN stopped to prevent leaks.",
+    ),
+    "rootTunErrorLastSessionAbnormalExit": MessageLookupByLibrary.simpleMessage(
+      "The previous Root TUN session exited unexpectedly. The current network state has been checked.",
+    ),
+    "rootTunErrorModeSwitchFailed": MessageLookupByLibrary.simpleMessage(
+      "Mode switching failed. Direct connectivity was restored.",
+    ),
+    "rootTunErrorModeSwitching": MessageLookupByLibrary.simpleMessage(
+      "Switching proxy mode (VPN ↔ Root TUN). Please wait.",
+    ),
+    "rootTunErrorNetworkRulesApplyFailed": MessageLookupByLibrary.simpleMessage(
+      "Could not apply network rules. Changes were rolled back; the network is unaffected.",
+    ),
+    "rootTunErrorPrivateDnsAutoTakenOver": MessageLookupByLibrary.simpleMessage(
+      "System Private DNS (automatic) is now handled by FlClash.",
+    ),
+    "rootTunErrorPrivateDnsStrict": MessageLookupByLibrary.simpleMessage(
+      "System Private DNS uses a specified server. DNS bypasses FlClash and routing may be inaccurate. Set Private DNS to automatic or off for full takeover.",
+    ),
+    "rootTunErrorRootGrantNotDetected": m70,
+    "rootTunErrorRootGrantRequiredInManager": m71,
+    "rootTunErrorRootManagerUnsupported": MessageLookupByLibrary.simpleMessage(
+      "This root manager is not supported. Root TUN supports Magisk, KernelSU and APatch only.",
+    ),
+    "rootTunErrorRootNotFound": MessageLookupByLibrary.simpleMessage(
+      "Root access was not detected. Root TUN is unavailable. You can still use VPN mode.",
+    ),
+    "rootTunErrorRootPermissionDenied": MessageLookupByLibrary.simpleMessage(
+      "Root permission was denied. Root TUN did not start.",
+    ),
+    "rootTunErrorRootPermissionRevoked": MessageLookupByLibrary.simpleMessage(
+      "Root permission was revoked. Root TUN stopped and direct connectivity was restored.",
+    ),
+    "rootTunErrorRootPermissionTimeout": MessageLookupByLibrary.simpleMessage(
+      "Root authorization timed out (30 seconds). Root TUN did not start.",
+    ),
+    "rootTunErrorStartTimeout": MessageLookupByLibrary.simpleMessage(
+      "Root TUN startup timed out (10 seconds). Changes were rolled back.",
+    ),
+    "rootTunErrorTunCreateFailed": MessageLookupByLibrary.simpleMessage(
+      "Could not create the TUN interface. Root TUN did not start; the network is unaffected.",
+    ),
+    "rootTunErrorTunDeviceUnsupported": MessageLookupByLibrary.simpleMessage(
+      "The device kernel does not support TUN. Root TUN cannot start.",
+    ),
+    "rootTunExport": MessageLookupByLibrary.simpleMessage(
+      "Export diagnostic logs",
+    ),
+    "rootTunExportFailed": m72,
+    "rootTunExportUnsupported": MessageLookupByLibrary.simpleMessage(
+      "The native layer does not support diagnostic export yet",
+    ),
+    "rootTunFailureAdvice": MessageLookupByLibrary.simpleMessage(
+      "Check root permission, configuration and conflicting modules. Retry or inspect logs. If cleanup fails, clean up residue or reboot the device.",
+    ),
+    "rootTunLastChannelError": MessageLookupByLibrary.simpleMessage(
+      "Last channel error",
+    ),
+    "rootTunLastError": MessageLookupByLibrary.simpleMessage("Last error"),
+    "rootTunLoadMore": MessageLookupByLibrary.simpleMessage("Load more"),
+    "rootTunLoading": MessageLookupByLibrary.simpleMessage(
+      "Reading native state…",
+    ),
+    "rootTunLogs": MessageLookupByLibrary.simpleMessage("Root TUN logs"),
+    "rootTunLogsEmpty": MessageLookupByLibrary.simpleMessage(
+      "No Root TUN logs yet",
+    ),
+    "rootTunManager": MessageLookupByLibrary.simpleMessage("Root manager"),
+    "rootTunManagerGuide": MessageLookupByLibrary.simpleMessage(
+      "Authorize FlClash in your root manager",
+    ),
+    "rootTunManagerNone": MessageLookupByLibrary.simpleMessage("Not detected"),
+    "rootTunManagerOpenFailed": MessageLookupByLibrary.simpleMessage(
+      "Could not open the manager. Open KernelSU/APatch from your launcher, authorize FlClash, then return.",
+    ),
+    "rootTunManagerUnknown": MessageLookupByLibrary.simpleMessage(
+      "Unknown / unsupported",
+    ),
+    "rootTunMode": MessageLookupByLibrary.simpleMessage("Current mode"),
+    "rootTunNativeUnavailable": MessageLookupByLibrary.simpleMessage(
+      "Native layer is not ready. Expand diagnostics for channel errors.",
+    ),
+    "rootTunNoSnapshot": MessageLookupByLibrary.simpleMessage(
+      "No native snapshot received",
+    ),
+    "rootTunOff": MessageLookupByLibrary.simpleMessage("Off"),
+    "rootTunOpenManager": MessageLookupByLibrary.simpleMessage("Open manager"),
+    "rootTunRecheck": MessageLookupByLibrary.simpleMessage("Check again"),
+    "rootTunStale": MessageLookupByLibrary.simpleMessage(
+      "State is unverified. Check again before changing settings.",
+    ),
+    "rootTunStateAwaitingAuth": MessageLookupByLibrary.simpleMessage(
+      "Awaiting authorization",
+    ),
+    "rootTunStateDegraded": MessageLookupByLibrary.simpleMessage("Degraded"),
+    "rootTunStateDisabled": MessageLookupByLibrary.simpleMessage("Disabled"),
+    "rootTunStateFailed": MessageLookupByLibrary.simpleMessage("Failed"),
+    "rootTunStateRecovering": MessageLookupByLibrary.simpleMessage(
+      "Recovering",
+    ),
+    "rootTunStateRunning": MessageLookupByLibrary.simpleMessage("Running"),
+    "rootTunStateStarting": MessageLookupByLibrary.simpleMessage("Starting"),
+    "rootTunStateStopping": MessageLookupByLibrary.simpleMessage(
+      "Stopping / cleaning up",
+    ),
+    "rootTunTimeout": MessageLookupByLibrary.simpleMessage(
+      "The native response timed out; the command was not cancelled. Refresh state before toggling again.",
+    ),
     "routeAddress": MessageLookupByLibrary.simpleMessage("Adresses de route"),
     "routeExcludeAddress": MessageLookupByLibrary.simpleMessage(
       "Adresses de route exclues",
@@ -1706,14 +1882,14 @@ class MessageLookup extends MessageLookupByLibrary {
       "La règle doit commencer par un type pris en charge, par exemple DOMAIN,example.com,DIRECT",
     ),
     "rules": MessageLookupByLibrary.simpleMessage("Règles"),
-    "rulesCount": m69,
+    "rulesCount": m73,
     "runTime": MessageLookupByLibrary.simpleMessage("Durée d’exécution"),
     "running": MessageLookupByLibrary.simpleMessage("En cours d’exécution"),
     "runtimeConfig": MessageLookupByLibrary.simpleMessage(
       "Configuration d’exécution",
     ),
     "safeMode": MessageLookupByLibrary.simpleMessage("Mode sans échec"),
-    "safeModeAppTitle": m70,
+    "safeModeAppTitle": m74,
     "saturation": MessageLookupByLibrary.simpleMessage("Saturation"),
     "save": MessageLookupByLibrary.simpleMessage("Enregistrer"),
     "saveChanges": MessageLookupByLibrary.simpleMessage(
@@ -1728,9 +1904,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "search": MessageLookupByLibrary.simpleMessage("Rechercher"),
     "seconds": MessageLookupByLibrary.simpleMessage("secondes"),
-    "secondsCount": m71,
+    "secondsCount": m75,
     "secretKey": MessageLookupByLibrary.simpleMessage("Clé"),
-    "sectionsInEffect": m72,
+    "sectionsInEffect": m76,
     "selectAll": MessageLookupByLibrary.simpleMessage("Tout sélectionner"),
     "selectRuleSet": MessageLookupByLibrary.simpleMessage(
       "Veuillez sélectionner un jeu de règles",
@@ -1740,7 +1916,7 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "selected": MessageLookupByLibrary.simpleMessage("Sélectionné"),
     "server": MessageLookupByLibrary.simpleMessage("Serveur"),
-    "serviceAbnormalCount": m73,
+    "serviceAbnormalCount": m77,
     "serviceAllAvailable": MessageLookupByLibrary.simpleMessage(
       "Tout est disponible",
     ),
@@ -1748,7 +1924,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "serviceBlocked": MessageLookupByLibrary.simpleMessage("Bloqué"),
     "serviceCheck": MessageLookupByLibrary.simpleMessage("Vérifier"),
     "serviceCheckAll": MessageLookupByLibrary.simpleMessage("Tout vérifier"),
-    "serviceCheckedAt": m74,
+    "serviceCheckedAt": m78,
     "serviceComingSoon": MessageLookupByLibrary.simpleMessage(
       "Bientôt disponible",
     ),
@@ -1776,8 +1952,8 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "settingEntries": MessageLookupByLibrary.simpleMessage("réglages"),
     "settings": MessageLookupByLibrary.simpleMessage("Paramètres"),
-    "settingsCount": m75,
-    "shareLinkUnreadable": m76,
+    "settingsCount": m79,
+    "shareLinkUnreadable": m80,
     "shareLinksInvalid": MessageLookupByLibrary.simpleMessage(
       "Aucun proxy n’a pu être lu dans les liens",
     ),
@@ -1807,7 +1983,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "singleShareLinkOnly": MessageLookupByLibrary.simpleMessage(
       "Saisissez un seul lien ici ; pour en modifier plusieurs, utilisez la modification rapide de la liste",
     ),
-    "singleValueTip": m77,
+    "singleValueTip": m81,
     "size": MessageLookupByLibrary.simpleMessage("Taille"),
     "skipCertVerify": MessageLookupByLibrary.simpleMessage(
       "Ignorer la vérification du certificat",
@@ -1923,8 +2099,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "totalUpload": MessageLookupByLibrary.simpleMessage("Envoyé"),
     "tproxyPort": MessageLookupByLibrary.simpleMessage("Port TProxy"),
     "traffic": MessageLookupByLibrary.simpleMessage("Trafic"),
-    "trafficPeak": m78,
-    "trafficTotal": m79,
+    "trafficPeak": m82,
+    "trafficTotal": m83,
     "trafficUsage": MessageLookupByLibrary.simpleMessage("Trafic utilisé"),
     "transport": MessageLookupByLibrary.simpleMessage("Transport"),
     "tun": MessageLookupByLibrary.simpleMessage("TUN"),
@@ -1962,7 +2138,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Bande passante d’envoi",
     ),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
-    "urlTip": m80,
+    "urlTip": m84,
     "useHosts": MessageLookupByLibrary.simpleMessage("Utiliser hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage(
       "Utiliser les hosts du système",
@@ -1991,8 +2167,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "Écrire dans le système règle aussi l’horloge système ; Android l’ignore.",
     ),
-    "yearsAgo": m81,
-    "yearsAgoShort": m82,
+    "yearsAgo": m85,
+    "yearsAgoShort": m86,
     "yes": MessageLookupByLibrary.simpleMessage("Oui"),
     "zhCN": MessageLookupByLibrary.simpleMessage("Chinois simplifié"),
   };

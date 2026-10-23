@@ -7836,6 +7836,716 @@ class AppLocalizations {
       args: [],
     );
   }
+
+  /// `Root TUN`
+  String get rootTun {
+    return Intl.message('Root TUN', name: 'rootTun', desc: '', args: []);
+  }
+
+  /// `Disabled`
+  String get rootTunStateDisabled {
+    return Intl.message(
+      'Disabled',
+      name: 'rootTunStateDisabled',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Awaiting authorization`
+  String get rootTunStateAwaitingAuth {
+    return Intl.message(
+      'Awaiting authorization',
+      name: 'rootTunStateAwaitingAuth',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Starting`
+  String get rootTunStateStarting {
+    return Intl.message(
+      'Starting',
+      name: 'rootTunStateStarting',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Running`
+  String get rootTunStateRunning {
+    return Intl.message(
+      'Running',
+      name: 'rootTunStateRunning',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Recovering`
+  String get rootTunStateRecovering {
+    return Intl.message(
+      'Recovering',
+      name: 'rootTunStateRecovering',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Stopping / cleaning up`
+  String get rootTunStateStopping {
+    return Intl.message(
+      'Stopping / cleaning up',
+      name: 'rootTunStateStopping',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Failed`
+  String get rootTunStateFailed {
+    return Intl.message(
+      'Failed',
+      name: 'rootTunStateFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Degraded`
+  String get rootTunStateDegraded {
+    return Intl.message(
+      'Degraded',
+      name: 'rootTunStateDegraded',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Root manager`
+  String get rootTunManager {
+    return Intl.message(
+      'Root manager',
+      name: 'rootTunManager',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Not detected`
+  String get rootTunManagerNone {
+    return Intl.message(
+      'Not detected',
+      name: 'rootTunManagerNone',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Unknown / unsupported`
+  String get rootTunManagerUnknown {
+    return Intl.message(
+      'Unknown / unsupported',
+      name: 'rootTunManagerUnknown',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Authorization`
+  String get rootTunAuth {
+    return Intl.message(
+      'Authorization',
+      name: 'rootTunAuth',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Unknown`
+  String get rootTunAuthUnknown {
+    return Intl.message(
+      'Unknown',
+      name: 'rootTunAuthUnknown',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Not authorized`
+  String get rootTunAuthNotGranted {
+    return Intl.message(
+      'Not authorized',
+      name: 'rootTunAuthNotGranted',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Authorized`
+  String get rootTunAuthGranted {
+    return Intl.message(
+      'Authorized',
+      name: 'rootTunAuthGranted',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Denied`
+  String get rootTunAuthDenied {
+    return Intl.message(
+      'Denied',
+      name: 'rootTunAuthDenied',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Revoked`
+  String get rootTunAuthRevoked {
+    return Intl.message(
+      'Revoked',
+      name: 'rootTunAuthRevoked',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Current mode`
+  String get rootTunMode {
+    return Intl.message(
+      'Current mode',
+      name: 'rootTunMode',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Off`
+  String get rootTunOff {
+    return Intl.message('Off', name: 'rootTunOff', desc: '', args: []);
+  }
+
+  /// `Start at boot`
+  String get rootTunAutostart {
+    return Intl.message(
+      'Start at boot',
+      name: 'rootTunAutostart',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Native layer is not ready. Expand diagnostics for channel errors.`
+  String get rootTunNativeUnavailable {
+    return Intl.message(
+      'Native layer is not ready. Expand diagnostics for channel errors.',
+      name: 'rootTunNativeUnavailable',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Reading native state…`
+  String get rootTunLoading {
+    return Intl.message(
+      'Reading native state…',
+      name: 'rootTunLoading',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `State is unverified. Check again before changing settings.`
+  String get rootTunStale {
+    return Intl.message(
+      'State is unverified. Check again before changing settings.',
+      name: 'rootTunStale',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Check again`
+  String get rootTunRecheck {
+    return Intl.message(
+      'Check again',
+      name: 'rootTunRecheck',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `I have authorized, check again`
+  String get rootTunAuthorizedRecheck {
+    return Intl.message(
+      'I have authorized, check again',
+      name: 'rootTunAuthorizedRecheck',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Authorize FlClash in your root manager`
+  String get rootTunManagerGuide {
+    return Intl.message(
+      'Authorize FlClash in your root manager',
+      name: 'rootTunManagerGuide',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Open manager`
+  String get rootTunOpenManager {
+    return Intl.message(
+      'Open manager',
+      name: 'rootTunOpenManager',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not open the manager. Open KernelSU/APatch from your launcher, authorize FlClash, then return.`
+  String get rootTunManagerOpenFailed {
+    return Intl.message(
+      'Could not open the manager. Open KernelSU/APatch from your launcher, authorize FlClash, then return.',
+      name: 'rootTunManagerOpenFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Waiting for root authorization: {seconds} seconds remaining`
+  String rootTunAuthCountdown(Object seconds) {
+    return Intl.message(
+      'Waiting for root authorization: $seconds seconds remaining',
+      name: 'rootTunAuthCountdown',
+      desc: '',
+      args: [seconds],
+    );
+  }
+
+  /// `Export diagnostic logs`
+  String get rootTunExport {
+    return Intl.message(
+      'Export diagnostic logs',
+      name: 'rootTunExport',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The native layer does not support diagnostic export yet`
+  String get rootTunExportUnsupported {
+    return Intl.message(
+      'The native layer does not support diagnostic export yet',
+      name: 'rootTunExportUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Root TUN logs`
+  String get rootTunLogs {
+    return Intl.message(
+      'Root TUN logs',
+      name: 'rootTunLogs',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No Root TUN logs yet`
+  String get rootTunLogsEmpty {
+    return Intl.message(
+      'No Root TUN logs yet',
+      name: 'rootTunLogsEmpty',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Load more`
+  String get rootTunLoadMore {
+    return Intl.message(
+      'Load more',
+      name: 'rootTunLoadMore',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Diagnostics`
+  String get rootTunDiagnostics {
+    return Intl.message(
+      'Diagnostics',
+      name: 'rootTunDiagnostics',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Channel availability`
+  String get rootTunChannel {
+    return Intl.message(
+      'Channel availability',
+      name: 'rootTunChannel',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Available`
+  String get rootTunChannelAvailable {
+    return Intl.message(
+      'Available',
+      name: 'rootTunChannelAvailable',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Last channel error`
+  String get rootTunLastChannelError {
+    return Intl.message(
+      'Last channel error',
+      name: 'rootTunLastChannelError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `No native snapshot received`
+  String get rootTunNoSnapshot {
+    return Intl.message(
+      'No native snapshot received',
+      name: 'rootTunNoSnapshot',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Last error`
+  String get rootTunLastError {
+    return Intl.message(
+      'Last error',
+      name: 'rootTunLastError',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Clean up Root TUN residue`
+  String get rootTunCleanup {
+    return Intl.message(
+      'Clean up Root TUN residue',
+      name: 'rootTunCleanup',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Check root permission, configuration and conflicting modules. Retry or inspect logs. If cleanup fails, clean up residue or reboot the device.`
+  String get rootTunFailureAdvice {
+    return Intl.message(
+      'Check root permission, configuration and conflicting modules. Retry or inspect logs. If cleanup fails, clean up residue or reboot the device.',
+      name: 'rootTunFailureAdvice',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The native response timed out; the command was not cancelled. Refresh state before toggling again.`
+  String get rootTunTimeout {
+    return Intl.message(
+      'The native response timed out; the command was not cancelled. Refresh state before toggling again.',
+      name: 'rootTunTimeout',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Diagnostic export failed: {error}`
+  String rootTunExportFailed(Object error) {
+    return Intl.message(
+      'Diagnostic export failed: $error',
+      name: 'rootTunExportFailed',
+      desc: '',
+      args: [error],
+    );
+  }
+
+  /// `Root access was not detected. Root TUN is unavailable. You can still use VPN mode.`
+  String get rootTunErrorRootNotFound {
+    return Intl.message(
+      'Root access was not detected. Root TUN is unavailable. You can still use VPN mode.',
+      name: 'rootTunErrorRootNotFound',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `This root manager is not supported. Root TUN supports Magisk, KernelSU and APatch only.`
+  String get rootTunErrorRootManagerUnsupported {
+    return Intl.message(
+      'This root manager is not supported. Root TUN supports Magisk, KernelSU and APatch only.',
+      name: 'rootTunErrorRootManagerUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Root TUN requires Android 10 or later.`
+  String get rootTunErrorAndroidVersionUnsupported {
+    return Intl.message(
+      'Root TUN requires Android 10 or later.',
+      name: 'rootTunErrorAndroidVersionUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Root permission was denied. Root TUN did not start.`
+  String get rootTunErrorRootPermissionDenied {
+    return Intl.message(
+      'Root permission was denied. Root TUN did not start.',
+      name: 'rootTunErrorRootPermissionDenied',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Grant root access to FlClash Root (com.follow.clash.root) in {manager}. Return here and tap “I have authorized, check again”.`
+  String rootTunErrorRootGrantRequiredInManager(Object manager) {
+    return Intl.message(
+      'Grant root access to FlClash Root (com.follow.clash.root) in $manager. Return here and tap “I have authorized, check again”.',
+      name: 'rootTunErrorRootGrantRequiredInManager',
+      desc: '',
+      args: [manager],
+    );
+  }
+
+  /// `Root permission is still unavailable. Check that FlClash Root is authorized in {manager}.`
+  String rootTunErrorRootGrantNotDetected(Object manager) {
+    return Intl.message(
+      'Root permission is still unavailable. Check that FlClash Root is authorized in $manager.',
+      name: 'rootTunErrorRootGrantNotDetected',
+      desc: '',
+      args: [manager],
+    );
+  }
+
+  /// `Root authorization timed out (30 seconds). Root TUN did not start.`
+  String get rootTunErrorRootPermissionTimeout {
+    return Intl.message(
+      'Root authorization timed out (30 seconds). Root TUN did not start.',
+      name: 'rootTunErrorRootPermissionTimeout',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Root permission was revoked. Root TUN stopped and direct connectivity was restored.`
+  String get rootTunErrorRootPermissionRevoked {
+    return Intl.message(
+      'Root permission was revoked. Root TUN stopped and direct connectivity was restored.',
+      name: 'rootTunErrorRootPermissionRevoked',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Autostart failed: root permission was revoked. The network remains direct.`
+  String get rootTunErrorAutostartRootRevoked {
+    return Intl.message(
+      'Autostart failed: root permission was revoked. The network remains direct.',
+      name: 'rootTunErrorAutostartRootRevoked',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The device kernel does not support TUN. Root TUN cannot start.`
+  String get rootTunErrorTunDeviceUnsupported {
+    return Intl.message(
+      'The device kernel does not support TUN. Root TUN cannot start.',
+      name: 'rootTunErrorTunDeviceUnsupported',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not create the TUN interface. Root TUN did not start; the network is unaffected.`
+  String get rootTunErrorTunCreateFailed {
+    return Intl.message(
+      'Could not create the TUN interface. Root TUN did not start; the network is unaffected.',
+      name: 'rootTunErrorTunCreateFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Could not apply network rules. Changes were rolled back; the network is unaffected.`
+  String get rootTunErrorNetworkRulesApplyFailed {
+    return Intl.message(
+      'Could not apply network rules. Changes were rolled back; the network is unaffected.',
+      name: 'rootTunErrorNetworkRulesApplyFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `DNS takeover failed. Root TUN stopped to prevent leaks.`
+  String get rootTunErrorDnsTakeoverFailed {
+    return Intl.message(
+      'DNS takeover failed. Root TUN stopped to prevent leaks.',
+      name: 'rootTunErrorDnsTakeoverFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The proxy core could not start. Check the configuration.`
+  String get rootTunErrorCoreStartFailed {
+    return Intl.message(
+      'The proxy core could not start. Check the configuration.',
+      name: 'rootTunErrorCoreStartFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Root TUN startup timed out (10 seconds). Changes were rolled back.`
+  String get rootTunErrorStartTimeout {
+    return Intl.message(
+      'Root TUN startup timed out (10 seconds). Changes were rolled back.',
+      name: 'rootTunErrorStartTimeout',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The proxy core exited unexpectedly. Recovering automatically…`
+  String get rootTunErrorCoreCrashedRecovering {
+    return Intl.message(
+      'The proxy core exited unexpectedly. Recovering automatically…',
+      name: 'rootTunErrorCoreCrashedRecovering',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The proxy recovered automatically.`
+  String get rootTunErrorCoreRecovered {
+    return Intl.message(
+      'The proxy recovered automatically.',
+      name: 'rootTunErrorCoreRecovered',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Automatic recovery failed. Direct connectivity was restored; traffic is unproxied.`
+  String get rootTunErrorCoreRecoveryFailed {
+    return Intl.message(
+      'Automatic recovery failed. Direct connectivity was restored; traffic is unproxied.',
+      name: 'rootTunErrorCoreRecoveryFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The proxy core crashed three times in five minutes. Automatic retries stopped and direct connectivity was restored.`
+  String get rootTunErrorCoreCrashLoop {
+    return Intl.message(
+      'The proxy core crashed three times in five minutes. Automatic retries stopped and direct connectivity was restored.',
+      name: 'rootTunErrorCoreCrashLoop',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `The previous Root TUN session exited unexpectedly. The current network state has been checked.`
+  String get rootTunErrorLastSessionAbnormalExit {
+    return Intl.message(
+      'The previous Root TUN session exited unexpectedly. The current network state has been checked.',
+      name: 'rootTunErrorLastSessionAbnormalExit',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Switching proxy mode (VPN ↔ Root TUN). Please wait.`
+  String get rootTunErrorModeSwitching {
+    return Intl.message(
+      'Switching proxy mode (VPN ↔ Root TUN). Please wait.',
+      name: 'rootTunErrorModeSwitching',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Mode switching failed. Direct connectivity was restored.`
+  String get rootTunErrorModeSwitchFailed {
+    return Intl.message(
+      'Mode switching failed. Direct connectivity was restored.',
+      name: 'rootTunErrorModeSwitchFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `FlClash is configured as an always-on VPN, which conflicts with Root TUN. FlClash will use Root TUN. Turn off “Always-on VPN” and “Block connections without VPN” in system settings to avoid losing connectivity.`
+  String get rootTunErrorAlwaysOnVpnConflict {
+    return Intl.message(
+      'FlClash is configured as an always-on VPN, which conflicts with Root TUN. FlClash will use Root TUN. Turn off “Always-on VPN” and “Block connections without VPN” in system settings to avoid losing connectivity.',
+      name: 'rootTunErrorAlwaysOnVpnConflict',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `System Private DNS (automatic) is now handled by FlClash.`
+  String get rootTunErrorPrivateDnsAutoTakenOver {
+    return Intl.message(
+      'System Private DNS (automatic) is now handled by FlClash.',
+      name: 'rootTunErrorPrivateDnsAutoTakenOver',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `System Private DNS uses a specified server. DNS bypasses FlClash and routing may be inaccurate. Set Private DNS to automatic or off for full takeover.`
+  String get rootTunErrorPrivateDnsStrict {
+    return Intl.message(
+      'System Private DNS uses a specified server. DNS bypasses FlClash and routing may be inaccurate. Set Private DNS to automatic or off for full takeover.',
+      name: 'rootTunErrorPrivateDnsStrict',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Autostart failed (network unavailable or configuration unreadable). The network remains direct.`
+  String get rootTunErrorAutostartFailed {
+    return Intl.message(
+      'Autostart failed (network unavailable or configuration unreadable). The network remains direct.',
+      name: 'rootTunErrorAutostartFailed',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `Root TUN rules could not be fully cleaned up. Connectivity may be affected.`
+  String get rootTunErrorCleanupFailed {
+    return Intl.message(
+      'Root TUN rules could not be fully cleaned up. Connectivity may be affected.',
+      name: 'rootTunErrorCleanupFailed',
+      desc: '',
+      args: [],
+    );
+  }
 }
 
 class AppLocalizationDelegate extends LocalizationsDelegate<AppLocalizations> {
