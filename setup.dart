@@ -100,7 +100,8 @@ ArgParser createSetupArgParser() {
       'arch',
       valueHelp: 'arm,arm64,amd64',
       allowed: ['arm', 'arm64', 'amd64'],
-      help: 'Target architectures, comma-separated (Android only; default: all)',
+      help:
+          'Target architectures, comma-separated (Android only; default: all)',
     )
     ..addFlag(
       'verbose',
