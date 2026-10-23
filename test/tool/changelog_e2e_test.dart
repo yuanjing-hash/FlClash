@@ -110,6 +110,67 @@ void main() {
     expect(tags.map((tag) => tag.name), ['v1.1.0', 'v1.1.0-pre.1', 'v1.0.0']);
   });
 
+  test('root releases retain their versions and split the stable range', () {
+    commit('fix: first root fix');
+    git(['tag', 'v1.1.0-root.1']);
+    commit('feat: root feature');
+    git(['tag', 'v1.1.0-root.2-pre.1']);
+    commit('fix: second root fix');
+    git(['tag', 'v1.1.0-root.2']);
+
+    final versions = build().changelog.versions;
+
+    expect(versions.map((version) => version.tag), [
+      'v1.1.0-root.2',
+      'v1.1.0-root.1',
+      'v1.1.0',
+    ]);
+    expect(versions.first.version, '1.1.0-root.2');
+    expect(versions.first.prerelease, isFalse);
+    expect(
+      versions.first.groups.expand((group) => group.entries).map((e) => e.text),
+      containsAll(['Root feature', 'Second root fix']),
+    );
+    expect(versions[1].groups.single.entries.single.text, 'First root fix');
+  });
+
+  test('sorts root revisions and prereleases numerically', () {
+    for (final name in [
+      'v1.1.0-root.2',
+      'v1.1.0-root.10-pre.2',
+      'v1.1.0-root.10-pre.10',
+      'v1.1.0-root.10',
+    ]) {
+      git(['tag', name]);
+    }
+
+    final tags = Git(workingDirectory: repo.path).versionTags();
+
+    expect(tags.map((tag) => tag.name), [
+      'v1.1.0-root.10',
+      'v1.1.0-root.10-pre.10',
+      'v1.1.0-root.10-pre.2',
+      'v1.1.0-root.2',
+      'v1.1.0',
+      'v1.1.0-pre.1',
+      'v1.0.0',
+    ]);
+    expect(tags[1].isPrerelease, isTrue);
+    expect(tags.first.isPrerelease, isFalse);
+  });
+
+  test('rejects malformed root and prerelease tags', () {
+    for (final name in [
+      'v1.1.0-root',
+      'v1.1.0-root.x',
+      'v1.1.0-root.1-extra',
+      'v1.1.0-root.1-pre',
+      'v1.1.0-pre.1-root.1',
+    ]) {
+      expect(VersionTag.tryParse(name), isNull, reason: name);
+    }
+  });
+
   test('lifts breaking changes into their own group', () {
     final groups = build().changelog.versions.single.groups;
 

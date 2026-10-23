@@ -2,12 +2,14 @@ import 'dart:io';
 
 import 'models.dart';
 
-final _tagPattern = RegExp(r'^v(\d+)\.(\d+)\.(\d+)(?:-pre\.(\d+))?$');
+final _tagPattern = RegExp(
+  r'^v(\d+)\.(\d+)\.(\d+)(?:-root\.(\d+))?(?:-pre\.(\d+))?$',
+);
 
 const _fieldSeparator = '\u001f';
 const _recordSeparator = '\u001e';
 
-/// A release tag that matches the `vMAJOR.MINOR.PATCH[-pre.N]` contract.
+/// A release tag matching `vMAJOR.MINOR.PATCH[-root.N][-pre.N]`.
 ///
 /// Every other tag in the repository is ignored on purpose: `backup-pre-squash-*`
 /// and similar bookkeeping tags would otherwise show up in the generated
@@ -18,6 +20,7 @@ class VersionTag implements Comparable<VersionTag> {
     required this.major,
     required this.minor,
     required this.patch,
+    this.root,
     this.pre,
   });
 
@@ -25,11 +28,13 @@ class VersionTag implements Comparable<VersionTag> {
   final int major;
   final int minor;
   final int patch;
+  final int? root;
   final int? pre;
 
   bool get isPrerelease => pre != null;
 
-  String get version => '$major.$minor.$patch';
+  String get version =>
+      '$major.$minor.$patch${root == null ? '' : '-root.$root'}';
 
   static VersionTag? tryParse(String name) {
     final match = _tagPattern.firstMatch(name.trim());
@@ -41,7 +46,8 @@ class VersionTag implements Comparable<VersionTag> {
       major: int.parse(match.group(1)!),
       minor: int.parse(match.group(2)!),
       patch: int.parse(match.group(3)!),
-      pre: match.group(4) == null ? null : int.parse(match.group(4)!),
+      root: match.group(4) == null ? null : int.parse(match.group(4)!),
+      pre: match.group(5) == null ? null : int.parse(match.group(5)!),
     );
   }
 
@@ -58,6 +64,10 @@ class VersionTag implements Comparable<VersionTag> {
     final byPatch = patch.compareTo(other.patch);
     if (byPatch != 0) {
       return byPatch;
+    }
+    final byRoot = (root ?? -1).compareTo(other.root ?? -1);
+    if (byRoot != 0) {
+      return byRoot;
     }
     if (pre == null && other.pre == null) {
       return 0;

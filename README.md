@@ -45,7 +45,7 @@ Get the latest build from [GitHub Releases](https://github.com/chen08209/FlClash
 
 | Platform | Packages | Notes |
 | --- | --- | --- |
-| Android | APK for `arm64-v8a`, `armeabi-v7a` and `x86_64` | Most phones use `arm64-v8a`. Also on the F-Droid repository below. |
+| Android | APK for `arm64-v8a` and `x86_64` | Most phones use `arm64-v8a`. Also on the F-Droid repository below. |
 | Windows 10 and later | Installer (`.exe`) or portable `.zip`, for x64 and ARM64 | Pick ARM64 on Snapdragon and other ARM laptops. |
 | macOS 12 and later | DMG for Apple Silicon and Intel | Also on Homebrew. |
 | Linux | `.deb`, `.rpm` and AppImage, for x64 and ARM64 | See the tray note below. |
@@ -73,6 +73,8 @@ sudo dnf install libayatana-appindicator-gtk3     # Fedora
 ```
 
 ## Usage
+
+Android Root TUN is available in Network settings. Native integration and diagnostic export details are in [the Flutter integration notes](docs/root-tun/flutter.md).
 
 **Import a profile from a link.** Opening a link in this form imports the subscription into FlClash. The `clashmeta://`
 and `flclash://` schemes work the same way.

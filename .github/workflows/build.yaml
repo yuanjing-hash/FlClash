@@ -6,14 +6,17 @@ on:
       - '**'
     tags:
       - 'v*'
+  pull_request:
   workflow_dispatch:
+
+permissions:
+  contents: read
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/v') }}
 
 env:
-  IS_STABLE: ${{ !contains(github.ref, '-') }}
   # See CI Caches in .agents/commands.md.
   BRANCH_CACHE: ${{ !startsWith(github.ref, 'refs/tags/') }}
   FLUTTER_VERSION: '3.47.6'
@@ -23,9 +26,6 @@ env:
 jobs:
   dart:
     name: Dart
-    # A private copy pays for its Actions minutes, so it runs the checks only when
-    # started by hand.
-    if: &checks github.event_name == 'workflow_dispatch' || !github.event.repository.private
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -76,7 +76,6 @@ jobs:
 
   plugins:
     name: Plugins
-    if: *checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -101,7 +100,7 @@ jobs:
 
   desktop:
     name: Desktop ${{ matrix.platform }}
-    if: (github.event_name == 'workflow_dispatch' || !github.event.repository.private) && !(github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v'))
+    if: github.repository == 'yuanjing-hash/FlClash' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -162,14 +161,11 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
-      # Compiles the desktop runners and the native plugin code that only the
-      # tagged release matrix built before; the bundle itself is discarded.
       - name: Build debug bundle
         run: flutter build ${{ matrix.platform }} --debug
 
   go:
     name: Go core
-    if: *checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -212,7 +208,6 @@ jobs:
 
   android:
     name: Android unit tests
-    if: *checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -276,9 +271,12 @@ jobs:
             -Ptarget-platform=android-arm64 \
             -x :app:compileFlutterBuildDebug -x :app:copyFlutterAssetsDebug
 
+      - name: Clean Android build properties
+        if: always()
+        run: rm -f android/app/keystore.jks android/local.properties
+
   rust:
     name: Rust
-    if: *checks
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -304,7 +302,6 @@ jobs:
 
   windows-helper-test:
     name: Windows helper test
-    if: *checks
     runs-on: windows-2022
     steps:
       - name: Checkout
@@ -323,59 +320,31 @@ jobs:
         run: cargo test --manifest-path services/helper/Cargo.toml --features windows-service
 
   build:
-    # Releases publish where the release links point: the public repository.
-    if: github.repository == 'chen08209/FlClash' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        include:
-          - platform: android
-            os: ubuntu-latest
-          - platform: windows
-            os: Windows-2022
-            arch: amd64
-          - platform: linux
-            os: ubuntu-22.04
-            arch: amd64
-          - platform: macos
-            os: macos-15-intel
-            arch: amd64
-          - platform: macos
-            os: macos-latest
-            arch: arm64
-          - platform: windows
-            os: windows-11-arm
-            arch: arm64
-            flutter-channel: master
-          - platform: linux
-            os: ubuntu-24.04-arm
-            arch: arm64
-            flutter-channel: master
-
+    name: Android APK
+    # Every push (any branch or v* tag) and manual runs build APKs; PR events reuse the branch push run.
+    if: github.repository == 'yuanjing-hash/FlClash' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    outputs:
+      stable: ${{ steps.version.outputs.stable }}
+      signed: ${{ steps.signing.outputs.signed }}
     steps:
-      - name: Setup rust
-        if: startsWith(matrix.os, 'windows-11-arm')
-        shell: pwsh
-        run: |
-          Invoke-WebRequest -Uri "https://win.rustup.rs/aarch64" -OutFile rustup-init.exe
-          .\rustup-init.exe -y --default-toolchain stable
-          $cargoPath = "$env:USERPROFILE\.cargo\bin"
-          Add-Content $env:GITHUB_PATH $cargoPath
-
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      - name: Setup Android Signing
-        if: startsWith(matrix.platform,'android')
+      - name: Classify release tag
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+          REF_TYPE: ${{ github.ref_type }}
         run: |
-          echo "${{ secrets.KEYSTORE }}" | base64 --decode > android/app/keystore.jks
-          {
-            echo "keyAlias=${{ secrets.KEY_ALIAS }}"
-            echo "storePassword=${{ secrets.STORE_PASSWORD }}"
-            echo "keyPassword=${{ secrets.KEY_PASSWORD }}"
-          } >> android/local.properties
+          stable=false
+          if [[ "$REF_TYPE" == tag && "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-root\.[0-9]+)?$ ]]; then
+            stable=true
+          fi
+          echo "IS_STABLE=$stable" >> "$GITHUB_ENV"
+          echo "stable=$stable" >> "$GITHUB_OUTPUT"
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -384,31 +353,23 @@ jobs:
           cache: ${{ env.BRANCH_CACHE }}
           cache-dependency-path: core/go.sum
 
-      - name: Setup Gradle
-        if: startsWith(matrix.platform,'android')
-        uses: gradle/actions/setup-gradle@v6
-
-      - name: Enable git long paths (Windows)
-        if: startsWith(matrix.os, 'windows')
-        run: git config --global core.longpaths true
-
-      # Stable publishes no Windows or Linux arm64 archive; master makes the action
-      # clone the SDK at the pinned tag and let it fetch the host's own Dart SDK.
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          channel: ${{ matrix.flutter-channel || 'stable' }}
+          channel: stable
           flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: ${{ env.BRANCH_CACHE }}
 
-      - name: Setup Xcode
-        if: startsWith(matrix.platform,'macos')
-        run: |
-          sudo xcode-select -s /Applications/Xcode_26.3.app || sudo xcode-select -s /Applications/Xcode_26.2.app
-          xcodebuild -version
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
 
       - name: Setup NDK
-        if: startsWith(matrix.platform,'android')
         uses: nttld/setup-ndk@v1
         id: build-ndk
         with:
@@ -416,20 +377,31 @@ jobs:
           add-to-path: true
           link-to-sdk: true
 
-      - name: Get Flutter Dependency
+      - name: Install dependencies
+        run: flutter pub get
+
+      - name: Setup Android signing
+        id: signing
+        env:
+          KEYSTORE: ${{ secrets.KEYSTORE }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
-          flutter --version
-          flutter pub get
+          if [[ -n "$KEYSTORE" && -n "$KEY_ALIAS" && -n "$STORE_PASSWORD" && -n "$KEY_PASSWORD" ]]; then
+            printf '%s' "$KEYSTORE" | base64 --decode > android/app/keystore.jks
+            {
+              printf 'keyAlias=%s\n' "$KEY_ALIAS"
+              printf 'storePassword=%s\n' "$STORE_PASSWORD"
+              printf 'keyPassword=%s\n' "$KEY_PASSWORD"
+            } >> android/local.properties
+            echo 'signed=true' >> "$GITHUB_OUTPUT"
+          else
+            echo 'signed=false' >> "$GITHUB_OUTPUT"
+            echo 'Signing secrets unavailable; building debug-signed APKs for workflow artifacts.'
+          fi
 
-      # See .agents/flutter-upgrade.md before bumping FLUTTER_VERSION.
-      - name: Disable Impeller on Intel macOS
-        if: matrix.platform == 'macos' && matrix.arch == 'amd64'
-        run: plutil -replace FLTEnableImpeller -bool NO macos/Runner/Info.plist
-
-      # The core embeds this bundle and FlClashHttpOverrides.trustCoreRoots loads it for Dart.
-      # Pinned by hash, so a new bundle from https://curl.se/docs/caextract.html is a reviewed bump.
       - name: Fetch CA certificates
-        shell: bash
         env:
           CA_BUNDLE: cacert-2026-09-25.pem
           CA_BUNDLE_SHA256: a41b5d356aea97a529fe27e0f7316d2f9d946d75927476cf9cf1b90637d00505
@@ -438,43 +410,73 @@ jobs:
           curl -fsSL --retry 3 -o "$bundle" "https://curl.se/ca/$CA_BUNDLE"
           echo "$CA_BUNDLE_SHA256  $bundle" | sha256sum -c -
 
-      - name: Setup
+      - name: Build APKs
         env:
           ANDROID_NDK_HOME: ${{ steps.build-ndk.outputs.ndk-path }}
-        run: dart setup.dart ${{ matrix.platform }} ${{ env.IS_STABLE == 'true' && '--env stable' || '' }} -v
+        # armeabi-v7a is not shipped; Root TUN targets 64-bit devices.
+        run: dart setup.dart android --arch arm64,amd64 ${{ env.IS_STABLE == 'true' && '--env stable' || '' }} -v
 
-      - name: Upload
+      - name: Clean Android signing files
+        if: always()
+        run: rm -f android/app/keystore.jks android/local.properties
+
+      - name: Prepare APK artifacts and checksums
+        env:
+          SIGNED: ${{ steps.signing.outputs.signed }}
+        run: |
+          mkdir -p apks
+          find dist -type f -name '*.apk' -exec cp -t apks {} +
+          version=$(sed -n 's/^version: \([^+]*\)+.*/\1/p' pubspec.yaml)
+          for abi in arm64-v8a x86_64; do
+            test -f "apks/FlClash-$version-android-$abi.apk"
+          done
+          if [[ "$SIGNED" != true ]]; then
+            for apk in apks/*.apk; do
+              mv "$apk" "${apk%.apk}-debug.apk"
+            done
+          fi
+          cd apks
+          sha256sum ./*.apk > SHA256SUMS
+
+      - name: Upload APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: artifact-${{ matrix.platform }}${{ matrix.arch && format('-{0}', matrix.arch) }}
-          path: ./dist
-          overwrite: true
+          name: android-apks${{ steps.signing.outputs.signed != 'true' && '-debug' || '' }}
+          path: ./apks/
+          if-no-files-found: error
 
   upload:
+    name: Android release
+    if: github.repository == 'yuanjing-hash/FlClash' && github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') && needs.build.outputs.signed == 'true'
     permissions:
       contents: write
     needs: [ build, dart, plugins, go, android, rust, windows-helper-test ]
     runs-on: ubuntu-latest
-    services:
-      telegram-bot-api:
-        image: aiogram/telegram-bot-api:latest
-        env:
-          TELEGRAM_API_ID: ${{ secrets.TELEGRAM_API_ID }}
-          TELEGRAM_API_HASH: ${{ secrets.TELEGRAM_API_HASH }}
-        ports:
-          - 8081:8081
+    env:
+      IS_STABLE: ${{ needs.build.outputs.stable }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Download
+      - name: Download signed APKs
         uses: actions/download-artifact@v4
         with:
+          name: android-apks
           path: ./dist/
-          pattern: artifact-*
-          merge-multiple: true
+
+      - name: Verify release files
+        run: |
+          cd dist
+          sha256sum --check SHA256SUMS
+          for file in *; do
+            case "$file" in
+              *-debug.apk) echo 'Debug APK cannot be released' >&2; exit 1 ;;
+              *.apk | SHA256SUMS) ;;
+              *) echo "Unexpected release file: $file" >&2; exit 1 ;;
+            esac
+          done
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
@@ -491,9 +493,7 @@ jobs:
           yq -i '.hooks.user_defines.setup.build_assets = false | .hooks.user_defines.rust_api.build_assets = false' pubspec.yaml
 
       - name: Generate release notes
-        shell: bash
         env:
-          IS_STABLE: ${{ env.IS_STABLE }}
           TAG: ${{ github.ref_name }}
         run: |
           target=()
@@ -503,83 +503,15 @@ jobs:
             dart run tool/changelog.dart build --unreleased
           fi
           dart run tool/changelog.dart render release "${target[@]}" --out release.md
-          dart run tool/changelog.dart render telegram "${target[@]}" --out telegram.md
+          version=$(sed -n 's/^version: \([^+]*\)+.*/\1/p' pubspec.yaml)
+          sed -e "s|vVERSION|$TAG|g" -e "s|VERSION|$version|g" .github/release_template.md >> release.md
 
-      - name: Push to telegram
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TAG: ${{ github.ref_name }}
-          RUN_ID: ${{ github.run_id }}
-        run: |
-          python -m pip install --upgrade pip
-          pip install requests
-          python release_telegram.py
-
-      - name: Patch release.md
-        run: |
-          version=$(echo "${{ github.ref_name }}" | sed 's/^v//')
-          sed "s|VERSION|$version|g" ./.github/release_template.md >> release.md
-
-      - name: Generate sha256
-        if: ${{ env.IS_STABLE == 'true' }}
-        run: |
-          cd ./dist
-          sha256sum ./* > SHA256SUMS
-
-      - name: Release
-        if: ${{ env.IS_STABLE == 'true' }}
+      - name: Release Android APKs
         uses: softprops/action-gh-release@v2
         with:
-          files: ./dist/*
-          body_path: './release.md'
-
-      - name: Create Homebrew Cask Source Dir
-        if: ${{ env.IS_STABLE == 'true' }}
-        run: |
-          version=$(echo "${{ github.ref_name }}" | sed 's/^v//')
-          arm_sha=$(sha256sum "./dist/FlClash-${version}-macos-arm64.dmg" | awk '{print $1}')
-          amd_sha=$(sha256sum "./dist/FlClash-${version}-macos-amd64.dmg" | awk '{print $1}')
-
-          mkdir -p ./brew/Casks
-          sed \
-            -e "s|VERSION|$version|g" \
-            -e "s|ARM_SHA256|$arm_sha|g" \
-            -e "s|AMD_SHA256|$amd_sha|g" \
-            ./.github/homebrew_cask_template.rb > ./brew/Casks/flclash.rb
-
-      - name: Push to Homebrew tap
-        if: ${{ env.IS_STABLE == 'true' }}
-        uses: cpina/github-action-push-to-another-repository@v1.7.2
-        env:
-          SSH_DEPLOY_KEY: ${{ secrets.HOMEBREW_SSH_DEPLOY_KEY }}
-        with:
-          source-directory: ./brew/
-          destination-github-username: chen08209
-          destination-repository-name: homebrew-tap
-          user-name: 'chen08029'
-          user-email: 'chen08209@gmail.com'
-          target-branch: main
-          commit-message: Update Homebrew cask from ${{ github.ref_name }}
-          target-directory: /
-
-      - name: Create Fdroid Source Dir
-        if: ${{ env.IS_STABLE == 'true' }}
-        run: |
-          mkdir -p ./tmp
-          cp ./dist/*android-arm64-v8a* ./tmp/ || true
-          echo "Files copied successfully"
-
-      - name: Push to fdroid repo
-        if: ${{ env.IS_STABLE == 'true' }}
-        uses: cpina/github-action-push-to-another-repository@v1.7.2
-        env:
-          SSH_DEPLOY_KEY: ${{ secrets.SSH_DEPLOY_KEY }}
-        with:
-          source-directory: ./tmp/
-          destination-github-username: chen08209
-          destination-repository-name: FlClash-fdroid-repo
-          user-name: 'chen08029'
-          user-email: 'chen08209@gmail.com'
-          target-branch: main
-          commit-message: Update from ${{ github.ref_name }}
-          target-directory: /tmp/
+          files: |
+            ./dist/*.apk
+            ./dist/SHA256SUMS
+          fail_on_unmatched_files: true
+          prerelease: ${{ env.IS_STABLE != 'true' }}
+          body_path: ./release.md

@@ -9,7 +9,7 @@ usage() {
   cat <<'EOF'
 Usage: tool/bump_version.sh [major|minor|all]
 
-major  Bump app version patch: 0.8.94 -> 0.8.95
+major  Bump app version patch, or root revision: 0.9.1-root.1 -> 0.9.1-root.2
 minor  Bump build number: YYYYMMDDNN, NN is today's build count from 01 to 99 (default)
 all    Bump both app version patch and build number
 EOF
@@ -20,7 +20,7 @@ if [[ "$mode" != "major" && "$mode" != "minor" && "$mode" != "all" ]]; then
   exit 64
 fi
 
-version_line="$(grep -E '^version: [0-9]+\.[0-9]+\.[0-9]+\+[0-9]{10}$' "$pubspec_file" || true)"
+version_line="$(grep -E '^version: [0-9]+\.[0-9]+\.[0-9]+(-root\.[0-9]+)?\+[0-9]{10}$' "$pubspec_file" || true)"
 if [[ -z "$version_line" ]]; then
   echo "No valid version line found in $pubspec_file" >&2
   exit 1
@@ -31,9 +31,14 @@ app_version="${version%%+*}"
 build_number="${version##*+}"
 
 if [[ "$mode" == "major" || "$mode" == "all" ]]; then
-  IFS='.' read -r major minor patch <<<"$app_version"
-  patch=$((patch + 1))
-  app_version="$major.$minor.$patch"
+  if [[ "$app_version" == *-root.* ]]; then
+    root_revision="${app_version##*-root.}"
+    app_version="${app_version%-root.*}-root.$((root_revision + 1))"
+  else
+    IFS='.' read -r major minor patch <<<"$app_version"
+    patch=$((patch + 1))
+    app_version="$major.$minor.$patch"
+  fi
 fi
 
 if [[ "$mode" == "minor" || "$mode" == "all" ]]; then

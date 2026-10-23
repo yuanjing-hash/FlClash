@@ -315,6 +315,13 @@ void main() {
         '0.8.96',
       );
     });
+
+    test('preserves the root revision without the build number', () {
+      expect(
+        readPubspecVersion('version: 0.9.1-root.1+2026101702\n'),
+        '0.9.1-root.1',
+      );
+    });
   });
 }
 
