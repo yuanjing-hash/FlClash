@@ -15,12 +15,12 @@ usage() {
   cat <<'EOF'
 Usage: tool/release.sh <pre|stable> [options]
 
-  pre                Tag the next vX.Y.Z-pre.N prerelease.
-  stable             Write the changelog, commit it, and tag vX.Y.Z.
+  pre                Tag the next vX.Y.Z[-root.N]-pre.N prerelease.
+  stable             Write the changelog, commit it, and tag vX.Y.Z[-root.N].
 
 Options:
-  --version X.Y.Z    Target app version. Defaults to the pubspec version,
-                     bumping the patch when that version is already tagged.
+  --version VERSION  Target X.Y.Z or X.Y.Z-root.N. Defaults to pubspec,
+                     bumping the patch or root revision if already tagged.
   --push             Push the branch and the tag once the local steps pass.
   --yes              Skip the confirmation prompt.
   --dry-run          Report the plan and exit without changing anything.
@@ -68,12 +68,12 @@ done
   exit 64
 }
 
-if [[ -n "$want_version" && ! "$want_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-  die "--version must look like 0.8.97, got: $want_version"
+if [[ -n "$want_version" && ! "$want_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-root\.[0-9]+)?$ ]]; then
+  die "--version must look like 0.9.1-root.1 or 0.9.1, got: $want_version"
 fi
 
 pubspec_version() {
-  sed -n 's/^version: \([0-9]*\.[0-9]*\.[0-9]*\).*/\1/p' pubspec.yaml
+  sed -n 's/^version: \([^+]*\)+.*/\1/p' pubspec.yaml
 }
 
 if ! git diff --quiet || ! git diff --cached --quiet; then
@@ -94,8 +94,13 @@ bumped=0
 if [[ -n "$want_version" ]]; then
   version="$want_version"
 elif git rev-parse -q --verify "refs/tags/v$current" >/dev/null; then
-  IFS='.' read -r vmaj vmin vpat <<<"$current"
-  version="$vmaj.$vmin.$((vpat + 1))"
+  if [[ "$current" == *-root.* ]]; then
+    root_revision="${current##*-root.}"
+    version="${current%-root.*}-root.$((root_revision + 1))"
+  else
+    IFS='.' read -r vmaj vmin vpat <<<"$current"
+    version="$vmaj.$vmin.$((vpat + 1))"
+  fi
   echo "pubspec is at $current, which is already tagged; targeting $version"
 else
   version="$current"
@@ -110,7 +115,8 @@ fi
 
 if [[ "$mode" == "pre" ]]; then
   last="$(git tag --list "v$version-pre.*" |
-    sed -n "s/^v$version-pre\.\([0-9]*\)$/\1/p" | sort -n | tail -1)"
+    grep -E '^v[0-9]+\.[0-9]+\.[0-9]+(-root\.[0-9]+)?-pre\.[0-9]+$' |
+    sed 's/.*-pre\.//' | sort -n | tail -1 || true)"
   tag="v$version-pre.$(((${last:-0}) + 1))"
 else
   tag="v$version"
@@ -123,11 +129,13 @@ echo "version   : $current -> $version$([[ $bumped == 1 ]] && echo ' (pubspec wi
 echo "tag       : $tag"
 if [[ "$mode" == "pre" ]]; then
   echo "changelog : rendered by CI from build --unreleased; nothing committed"
-  echo "publishes : build artifacts + Telegram only, no GitHub release"
+  echo "publishes : signed Android APKs + SHA256SUMS as a GitHub prerelease"
 else
   echo "changelog : CHANGELOG.md + changelog.json regenerated and committed"
-  echo "publishes : GitHub release with artifacts, SHA256SUMS, Homebrew cask"
+  echo "publishes : signed Android APKs + SHA256SUMS as a GitHub release"
 fi
+echo "repository: https://github.com/yuanjing-hash/FlClash"
+echo "signing   : without signing secrets, debug APKs stay workflow artifacts"
 echo "push      : $([[ $do_push == 1 ]] && echo yes || echo 'no (printed at the end)')"
 echo
 
@@ -139,7 +147,7 @@ restore() {
 trap restore EXIT
 
 if ((bumped)); then
-  sed -i.bak "s/^version: [0-9]*\.[0-9]*\.[0-9]*/version: $version/" pubspec.yaml
+  sed -i.bak "s/^version: [^+]*/version: $version/" pubspec.yaml
   rm -f pubspec.yaml.bak
 fi
 tool/bump_version.sh minor
