@@ -14,6 +14,9 @@ on:
       - build
     types:
       - completed
+    # Only release tag builds can publish (see the tag job), so ignore branch builds.
+    branches:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
