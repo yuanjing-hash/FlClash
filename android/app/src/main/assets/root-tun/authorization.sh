@@ -16,7 +16,7 @@ manager_authorization() {
             policy=$(timeout -s KILL 1 "$magisk_bin" --sqlite "SELECT policy,until FROM policies WHERE uid=$auth_uid;" 2>&1) || { echo unknown; return; }
             if [ -z "$policy" ]; then echo denied; return; fi
             printf '%s\n' "$policy" | awk -F '[=|]' -v now="$(date +%s)" '
-                /^policy=[012]\|until=[0-9]+$/ {
+                /^policy=[012][|]until=[0-9]+$/ {
                     valid++; allowed=($2 == 2 && ($4 == 0 || $4 > now))
                 }
                 END { if (valid != 1) print "unknown"; else print allowed ? "granted" : "denied" }'
@@ -69,7 +69,16 @@ app_authorization() {
     read -r auth_port auth_token < "$R/config/app-auth"
     case "$auth_port" in ''|*[!0-9]*) echo unknown; return ;; esac
     auth_nonce=$(cat /proc/sys/kernel/random/uuid)
-    reply=$(printf 'probe %s\n' "$auth_nonce" | timeout -s KILL 1 nc -w 1 127.0.0.1 "$auth_port" 2>/dev/null) || { echo unknown; return; }
+    runtime_status=$(cat "$STATE/status" 2>/dev/null) || runtime_status=disabled
+    runtime_status="$runtime_status|auth:$(cat "$STATE/auth-status" 2>/dev/null)|dns:$(cat "$STATE/private-dns" 2>/dev/null)"
+    if own_entry; then runtime_status="$runtime_status|autostart:yes"; else runtime_status="$runtime_status|autostart:no"; fi
+    if [ -s "$R/logs/restore-diff.txt" ]; then runtime_status="$runtime_status|restore-diff:yes"; fi
+    if [ "$(settings get secure always_on_vpn_app 2>/dev/null)" = "$(cat "$R/config/app.package" 2>/dev/null)" ]; then
+        runtime_status="$runtime_status|always-on:yes"
+    fi
+    status_digest=$(printf '%s:%s:%s' "$auth_token" "$auth_nonce" "$runtime_status" | sha256sum | cut -d' ' -f1)
+    reply=$(printf 'probe %s %s %s\n' "$auth_nonce" "$status_digest" "$runtime_status" |
+        timeout -s KILL 1 nc -w 1 127.0.0.1 "$auth_port" 2>/dev/null) || { echo unknown; return; }
     case "$reply" in granted\ *|revoked\ *|unknown\ *) ;; *) echo unknown; return ;; esac
     verdict=${reply%% *}
     expected=$(printf '%s:%s:%s' "$auth_token" "$auth_nonce" "$verdict" | sha256sum | cut -d' ' -f1)

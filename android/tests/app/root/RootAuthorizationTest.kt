@@ -11,6 +11,49 @@ import java.util.UUID
 
 class RootAuthorizationTest {
     @Test
+    fun backgroundProbesAreLimitedToOnceEveryFiveSeconds() {
+        val authorization = RootAuthorization()
+        var calls = 0
+        val denied = {
+            calls++
+            ShellResult(1, "", "Permission denied")
+        }
+        assertEquals("unknown", authorization.probe(0, denied))
+        assertEquals("unknown", authorization.probe(2_000, denied))
+        assertEquals("unknown", authorization.probe(4_999, denied))
+        assertEquals(1, calls)
+        assertEquals("revoked", authorization.probe(5_000, denied))
+        assertEquals(2, calls)
+    }
+
+    @Test
+    fun signedRootStatusArrivesWithoutAnAppSuProbe() {
+        val directory = Files.createTempDirectory("root-status").toFile()
+        try {
+            RootAuthorizationChannel(directory).use { channel ->
+                val parts = channel.configuration.trim().split(' ')
+                val port = parts[0].toInt()
+                val nonce = UUID.randomUUID().toString()
+                val status = "running -|auth:|dns:off|autostart:no"
+                exchange(port, "probe $nonce bad-signature $status")
+                assertNull(channel.runtimeStatus)
+                val signature = digest(parts[1], nonce, status)
+                exchange(port, "probe $nonce $signature $status")
+                assertEquals(status.replace('|', '\n'), channel.runtimeStatus)
+                val revoked = "failed ROOT_PERMISSION_REVOKED|auth:revoked|autostart:no"
+                exchange(port, "probe $nonce ${digest(parts[1], nonce, revoked)} $revoked")
+                assertEquals(revoked.replace('|', '\n'), channel.runtimeStatus)
+                channel.beginSession()
+                assertNull(channel.runtimeStatus)
+                exchange(port, "probe $nonce $signature $status")
+                assertNull(channel.runtimeStatus)
+            }
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
     fun requiresTwoExplicitDenialsAndResetsOnUnknownOrTimeout() {
         val authorization = RootAuthorization()
         val denied = ShellResult(1, "", "Permission denied")

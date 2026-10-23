@@ -54,6 +54,8 @@ echo 'policy=2|until=0' > "$FAKE_NET/magisk"
 [ "$(manager_authorization)" = granted ]
 echo 'policy=1|until=0' > "$FAKE_NET/magisk"
 [ "$(manager_authorization)" = denied ]
+: > "$FAKE_NET/magisk"
+[ "$(manager_authorization)" = denied ]
 echo 'policy=2|until=1' > "$FAKE_NET/magisk"
 [ "$(manager_authorization)" = denied ]
 for result in fail timeout malformed; do
@@ -117,3 +119,12 @@ rm -f "$FAKE_NET/block-cleanup"
 revoke_runtime "$(cat "$STATE/revocation-code")"
 [ "$(cat "$STATE/status")" = 'failed ROOT_PERMISSION_REVOKED' ]
 echo 'PASS cleanup retries retain revocation cause and report failed only after rules are gone'
+echo 0 > "$STATE/revoked-since"
+boot_seconds() { echo 600; }
+boot_seconds >/dev/null
+start_probe() { return 0; }
+start_probe auth
+watchdog
+[ ! -f "$RUN/watchdog.pid" ] && [ ! -f "$STATE/owned" ]
+grep -q 'revocation monitoring expired' "$R/logs/watchdog.log"
+echo 'PASS revoked watchdog exits after ten minutes without retaining network ownership'

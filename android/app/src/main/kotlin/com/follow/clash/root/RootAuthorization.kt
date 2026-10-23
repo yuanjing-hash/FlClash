@@ -10,6 +10,19 @@ import java.util.UUID
 
 internal class RootAuthorization {
     private var denials = 0
+    private var nextProbeAt = 0L
+    private var verdict = "unknown"
+
+    fun probe(
+        nowMs: Long,
+        execute: () -> ShellResult,
+    ): String {
+        if (nowMs >= nextProbeAt) {
+            nextProbeAt = nowMs + 5_000
+            verdict = observe(execute())
+        }
+        return verdict
+    }
 
     fun observe(result: ShellResult): String {
         val denied =
@@ -58,6 +71,9 @@ internal class RootAuthorizationChannel(
     @Volatile var cleanupCode: RootCode? = null
         private set
 
+    @Volatile var runtimeStatus: String? = null
+        private set
+
     val configuration: String get() = "${server.localPort} $token\n"
 
     private val thread =
@@ -92,6 +108,7 @@ internal class RootAuthorizationChannel(
 
     fun reset() {
         cleanupCode = null
+        runtimeStatus = null
         verdict = "granted"
     }
 
@@ -111,14 +128,21 @@ internal class RootAuthorizationChannel(
                     socket.soTimeout = 500
                     val line = StringBuilder()
                     val input = socket.getInputStream()
-                    while (line.length < 200) {
+                    while (line.length < 1_024) {
                         val next = input.read()
                         if (next == -1 || next == 10) break
                         line.append(next.toChar())
                     }
-                    val parts = line.toString().split(' ')
+                    val parts = line.toString().split(' ', limit = 4)
                     when {
-                        parts.size == 2 && parts[0] == "probe" && validNonce(parts[1]) -> {
+                        parts.size in setOf(2, 4) && parts[0] == "probe" && validNonce(parts[1]) -> {
+                            if (parts.size == 4) {
+                                synchronized(this) {
+                                    if (MessageDigest.isEqual(parts[2].toByteArray(), digest(parts[1], parts[3]).toByteArray())) {
+                                        runtimeStatus = parts[3].replace('|', '\n')
+                                    }
+                                }
+                            }
                             val current = verdict
                             socket.getOutputStream().write("$current ${digest(parts[1], current)}\n".toByteArray())
                         }
