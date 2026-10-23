@@ -1,7 +1,7 @@
 # Android Root TUN：方案 B 的 P0 后续实现
 
 工作分支：`feature/root-tun-p0`；基线：`feature/root-tun-native@8f38fc6`（PR #22 二次复审通过）。
-本轮完成 #25/#26/#28/#29 的代码与宿主模拟，以及复审中的非阻塞建议。
+本轮基于 `e37003d` 返工 PR #31，完成 B1–B3、M1–M4 的代码与宿主模拟，并处理或登记非阻塞建议。
 **尚未完成真机验收；不能据此关闭四个 P0、合入 main 或宣称方案 B 已通过验收。**
 
 唯一运行目录为 `/data/adb/flclash-root/`（R），唯一开机入口为 `/data/adb/service.d/flclash-root.sh`。
@@ -16,13 +16,15 @@
 - 两个心跳文件采用 TDD §6.3 的 JSON 字段：schemaVersion、pid、startTicks、bootId、bootMs、sessionId；
   当前 sessionId 使用监督代际，期限使用 boot 单调秒。watchdog 每秒循环，supervisor 重建失联 watchdog。
 - `owner.lock` 保持唯一网络/状态写者；watchdog 仅在接管时终止已核验的旧 supervisor、递增 generation 后写状态。
-  core 的 PID、API、TUN 和网络规则健康时交给新 supervisor；否则清理并进入 `failed(CORE_RECOVERY_FAILED)`。
+  心跳允许 5 秒间隔；core 的 PID、API、TUN 和网络规则健康时交给新 supervisor；失联后的前 24 秒
+  保留拦截并重试健康检查，预算耗尽才清理并进入 `failed(CORE_RECOVERY_FAILED)`。adopt 共用该截止时间。
 - core 崩溃恢复保留接管及 DNS/IPv6 防漏规则，只重启 core；IPv4 FCR_OUTPUT 增加非 TUN 出口拒绝规则，
   防止 TUN 消失后回落到物理网络。恢复失败才 cleanup/fail-open。恢复起止单调时间写入 supervisor.log。
 - 5 分钟崩溃窗口持久化在 R/run，跨 supervisor 接管保留；第 3 次进入 CORE_CRASH_LOOP。
   旧 boot 的 PID、网络所有权和崩溃记录不被当成当前 boot 的资源。
-- watchdog 的退出 trap 仅释放自己的 PID、探测子进程和锁，不拆正在运行的规则。正常 stop 结束 supervisor/core/watchdog 和已记录的 boot 任务；
-  失败态保留卸载监护。watchdog.log 按当前/上一份 2×1MiB 轮换。
+- watchdog 的退出 trap 仅释放自己的 PID、探测子进程和锁，不拆正在运行的规则。proxyStop 结束 supervisor/core
+  和已记录的 boot 任务，保留仅监护的 watchdog；显式 cleanup/disable 删除 R 前结束 watchdog。
+  失败态保留卸载监护；撤权并清理成功后最多监护 10 分钟。watchdog.log 按当前/上一份 2×1MiB 轮换。
 
 模拟覆盖：单实例、慢 pm 不阻塞心跳、watchdog TERM/KILL 后服务继续、supervisor 接管不重启 core、
 core 恢复不拆规则、supervisor/core 同时死亡后清理及空 restore-diff、正常 stop、旧版本监督进程接管、跨接管熔断。
@@ -55,7 +57,8 @@ TDD §5/W5 的实现口径：`pm uninstall -k` 保留精确数据目录时不判
 
 - `service.d.sh` 是 v2 薄入口，只定位 R 并脱离前台调用 runtime。runtime 缺失时只删除已知 marker 的自有入口。
   当前兼容 v1/v2；不认识的 marker、符号链接和其他文件不覆盖、不删除。
-- runtime 等待 boot_completed 最多 120s，等待用户 0 解锁最多 300s；每 2 秒重查，解锁查询本身有超时。
+- runtime 等待 boot_completed 最多 120s，等待用户 0 解锁最多 300s；每 2 秒重查，
+  `am get-started-user-state 0` 有 1 秒超时，匹配 RUNNING_UNLOCKED，未成立则回退 `getprop sys.user.0.ce_available=true`。
   解锁后最多 50s 等包/网络依赖，另留 10s 启动。配置异常或依赖超时保持直连并记录 AUTOSTART_FAILED。
 - 原子 `config/settings.json` 为规范化的 schemaVersion/rootTunEnabled/autostartEnabled；兼容既有两个开关文件。
   仅双开关都为 true 才提交启动。单个 R/run/boot-id 覆盖写入，不继续累积 boot-* 目录；
@@ -77,7 +80,7 @@ TDD §5/W5 的实现口径：`pm uninstall -k` 保留精确数据目录时不判
 
 | 路径 | 当前实现 | 验证边界 |
 | --- | --- | --- |
-| App 存活 | App UID 执行短超时 `su -c 'id -u'`，探测间隔约 2s + 至多 1s 执行；连续两次明确拒绝才发 revoked | 超时、可执行文件不可用和无法分类的失败为 unknown；实际管理器拒绝输出待 W3 |
+| App 存活 | Magisk 禁止后台 su 探测及状态轮询，读 root 侧签名回传；其他管理器仅在 runtime 可能存在且处于活动/清理态时探测，每 5s 最多一次，连续两次明确拒绝才发 revoked | proxyStop 后不再 su 探测；超时、可执行文件不可用和无法分类的失败为 unknown；实际管理器拒绝输出待 W3 |
 | KernelSU | 解析 `/data/adb/ksu/.allowlist`：magic、v2/v3 的 776 字节及 v4 的 784 字节记录，精确 package/UID/allow_su | 依据上游 UAPI；格式/版本/长度异常为 unknown；**未在目标手机核实，W3 未关闭** |
 | Magisk | `magisk --sqlite` 精确查 app UID 的 policy/until；识别拒绝、删除记录和过期 | 兼容命令与固定安装路径；执行失败、超时、未知输出不计拒绝；待实机 |
 | APatch | 读取 `/data/adb/ap/package_config`，校验 CSV 结构并精确 package/UID/allow | 已知无引号格式；未知格式不计拒绝；待实机 |
@@ -91,9 +94,13 @@ watchdog 的慢探测子任务每约 2s 调度，已有任务未结束时不重�
 App 与 root 的撤权交接使用新的有限本机通道：App 在 127.0.0.1 监听，root 发送随机 nonce，
 双方用私有随机 token 对 nonce/固定状态计算 SHA-256 签名；不在网络上传 token，不接受 shell/路径参数。
 App 连续拒绝后的 verdict 交给 watchdog；root 清理完成后回送签名确认，App 才发布 failed/revoked。
+root 探测同时将 state/status、auth-status、private-dns、自启入口及恢复差异状态签名回传；Magisk 的后台
+重连和状态监视均消费该结果，不启动 su。无回传时保留待核状态，显式 start 可授权并安装新版脚本。
 端口/token 在 App 私有目录持久化并配置到 R；显式重试时轮换 token，拒绝旧会话的清理确认。
 App 重建可接收此前的清理结果；App 强停时靠管理器记录独立清理。
-撤权后的 watchdog 保留结果交接与卸载监护，显式 stop/disable 才结束。业务错误仍仅使用附录 B 的 27 个码。
+撤权后的 watchdog 保留结果交接与卸载监护最多 10 分钟，清理失败不启动该退出预算。显式 cleanup/disable
+可提前结束。预算到期保留磁盘诊断与失败状态，后续卸载可能留下 R；这是尊重撤权后不继续常驻 root 的取舍。
+业务错误仍仅使用附录 B 的 27 个码。
 
 模拟覆盖：KSU grant/deny/未知 ABI、Magisk grant/deny/过期/超时/失败、APatch 精确记录/损坏格式、
 两次拒绝及 unknown 重置、清理后才报失败、清理失败重试保留原因、自启关闭与未知入口保留；
@@ -114,11 +121,55 @@ authStatus/错误码与通知可见性，重新授权后恢复；Android 17 本�
 - 诊断采集补充 heartbeat/generation/boot-id/owned.boot/auth-status 以及轮换后的 supervisor/watchdog/boot 日志；
   不导出授权通道 token、配置密钥或管理器完整授权列表。
 
+## PR #31 返工对照（e37003d 之后，未提交）
+
+已完整阅读 `out/p0-inputs/review-31.md`，包含 9 条行内评论与 12 项真机清单。
+
+| 项目 | 处理 | 对应验证 |
+| --- | --- | --- |
+| B1 | 删除不存在的 cmd user 子命令，am 判 RUNNING_UNLOCKED，未成立时回退 CE 属性；等待上限仍为 300s | boot-test 不替换 user_unlocked；am 命令桩覆盖直接解锁、锁定后解锁、am 不可用仅属性成功、两者失败超时 AUTOSTART_FAILED |
+| B2 | Magisk 不做 App su 探测，root 的 authorization.sh 查管理器并通过状态文件/签名通道回传；后台 status 和 App 重连同样不调用 su。其他管理器增加 runtime/活动状态门槛和 5s 限频 | RootTunControllerTest 覆盖 Magisk 禁止探测/状态查询、停止后禁止探测和 runtime 不存在；RootAuthorizationTest 覆盖限频、签名状态回传、旧会话拒绝；authorization-test 覆盖 Magisk 删除 policy 判 denied |
+| B3 | 心跳阈值 5s；watchdog 失联前 24s 不拆拦截，健康检查失败重试；接管 supervisor 继承同一截止时间且不重复采样后立刻失败 | runtime-test 覆盖 2.5s 循环、慢健康检查后恢复且不拆规则、不重启 core；持续核心失联预算耗尽后清理仍通过 |
+| M1 | 对旧 identity 的硬链接快照判活，按 identity 串行回收，原子 mv 到唯一 stale 文件后才尝试 ln 获锁；不删除公共锁路径，不再用连续两次读取作保护；回收者的陈旧锁也可回收 | lock-test 十轮双进程竞争均只有一个获锁者且锁内容一致，并覆盖回收进程死亡后重试 |
+| M2 | owner.lock 为旧目录时，仅确认 supervisor 的 PID/startTicks/boot_id 不存活后 rmdir；现有健康旧 supervisor 的显式 adopt 仍保留 | lock-test 拒绝清理活 owner；runtime-test 覆盖重启遗留目录后的 start/stop；uninstall-test 从目录锁完成卸载清理 |
+| M3 | proxyStop 保留/恢复 watchdog 的卸载监护；自启关闭不影响监护。独立 cleanup 用于 disable/delete 前结束 watchdog | runtime-test 区分 stop 与 cleanup；uninstall-test 在 proxyStop + autostart=0 后通过两次缺失确认删除 R |
+| M4 | settings 校验改用 grep -E 和 POSIX ERE；root-tun sh 资产排查未再发现 BRE 的扩展分支/量词；awk 的字面竖线也改成 [\|] 字符类 | boot-test 验证合法双布尔设置及非法设置；authorization-test 验证 Magisk policy；全量 ShellCheck 0.11.0 零告警 |
+
+非阻塞建议逐项处理：
+
+1. 撤权后驻留：清理成功记录单调时间，最多 600s 后退出并释放探测子进程、PID、心跳和锁；
+   失败清理继续重试。authorization-test 覆盖期限退出；R/诊断保留供 App 重试，因此到期后再卸载可能残留 R。
+2. KernelSU 分支 ABI：维持未知版本/长度/格式为 unknown 的保守判断，不把无法解析当成撤权。
+   KernelSU-Next/SukiSU 的实际 magic/版本/stride、撤销后无 su 的报错和漏判风险仍为 W3 真机待核；
+   本轮未增加新业务错误码或把连续 unknown 误报为 denied。已有 unknown ABI 与 JVM Executable unavailable 用例覆盖此边界。
+3. 卸载后快速重装 UID 变化：仍可能按旧 app.uid 判 denied 并清理，方向安全；真机记录该行为，未扩大本轮范围。
+4. private DNS 查询频率：仍每轮读取，5s 缓存属于后续性能优化；本轮以 B3 时延测试证明慢轮次不误接管。
+5. core 重启退避：仍由 5min 内 3 次熔断约束；runtime-test 覆盖跨 supervisor 接管的熔断，未加退避策略。
+6. 运行中版本混用：尚未引入 runtime 协议版本/自动 adopt 升级。Magisk 的旧驻留脚本不会回传新状态，
+   App 可保持 stale，需用户显式 start 安装新版脚本；后台不能为升级而触发 su 授权。该升级场景仍需真机取证。
+7. pm uninstall -k：REPORT 的保留数据口径不变；外部 TDD 不在本地输入中，仍待技术负责人在 #24 同步。
+8. 完整 APK 证据：本轮 JVM 编译/28 项单测通过；没有 Gradle wrapper 和 Flutter，未证明 assembleDebug，合入前仍需 CI/设备补证。
+
+评审的 12 项真机清单全部保留为待验，宿主模拟不代替下列取证：
+
+1. HyperOS/Android 17 的 am 用户状态、CE 属性，以及不存在的 cmd user 子命令实际输出。
+2. toybox grep 的 BRE 分支行为；当前代码已改成 ERE，仍需核实设备工具行为。
+3. pm path/list 在不存在、install -r、uninstall -k 下的退出码和输出。
+4. KernelSU allowlist 在授权/撤销时的 magic、版本、记录长度和 od 对照。
+5. Magisk SQLite 输出和删除记录的检测；撤权后 App 前台确认不反复弹框/toast。
+6. APatch package_config 的表头与列格式。
+7. KernelSU 未授权时 su 的报错，以及分支 ABI 未识别时 unknown 的诊断。
+8. 关闭 su 管道并强停 App 后的 supervisor/watchdog 会话/cgroup 存活。
+9. 安装大型 APK/高负载时心跳间隔、接管和 24s 防漏重试时序。
+10. #25/#26/#28/#29 各 AC 的抓包/DNS 日志与诊断导出。
+11. Android 17 root 身份 cmd notification post 的通知可见性。
+12. service.d/su SELinux 上下文下 timeout、nc、od、sha256sum、cksum、setsid、ln、sleep、diff、sed、awk 的可用性。
+
 ## 文件与验证方式
 
-主要改动：assets/root-tun/{runtime,authorization,service.d,diagnostics}.sh；RootRuntime、RootTunController、
-RootAuthorization、RootReconciliation、RootTunPlugin；android/tests/app/root 的两个新测试类；
-root-tun/tests 的 POSIX sh 模拟；out/compile-native.py 增加新测试类。
+本轮改动：assets/root-tun/{runtime,authorization}.sh；RootRuntime、RootTunController、RootAuthorization；
+android/tests/app/root 的 Controller/Authorization 测试；root-tun/tests 的 POSIX sh 模拟及新增 lock-test。
+沿用现有 out/compile-native.py 编译入口。
 Flutter MethodChannel/EventChannel、八态、27 个业务错误码和 exportDiagnostics ZIP 返回契约保持不变。
 
 在仓库根目录运行：
@@ -134,10 +185,10 @@ python3 out/compile-native.py
 真实 sh/core 替身进程按记录 PID 结束，不启动宿主 FlClash，不调用宿主网络修改命令。
 超时模拟偶尔出现 `Killed` 是 timeout 的预期取证，退出码与断言仍是最终结果。
 
-本机结果（2026-10-23）：shellcheck/sh -n（13 个脚本）、模拟套件（32 条 PASS）、ktlint、24 项 JVM JUnit、
+本机返工结果（2026-10-23）：shellcheck 0.11.0（`-s sh -x`）/sh -n、模拟套件（43 条 PASS）、ktlint、28 项 JVM JUnit、
 diff whitespace 和 comment-density 检查通过。
 JVM 编译使用 out/check-tools 缓存的 Android/Flutter 依赖与宿主/R/BuildConfig 桩，以 JVM 17 为目标；
-**不等于正式 Gradle/targetSdk 37 编译或 APK 验证**。日志位于 out/root-tun-p0-{shell-tests,native-tests,ktlint}.log。
+**不等于正式 Gradle/targetSdk 37 编译或 APK 验证**。本轮日志位于 `out/root-tun-p0-r1-*.log`。
 
 已尝试但未能执行的仓库检查：
 
@@ -154,20 +205,7 @@ Root 侧 status/心跳不等于完整 root-agent Snapshot/事件持久化；可�
 
 ## 提交与交付
 
-已尝试按 issue 创建 Conventional Commit，但 `git add` 无法创建
-`/workspace/FlClash/.git/worktrees/android/index.lock`：`Read-only file system`。
-因此没有新提交，HEAD 仍为 8f38fc6；没有绕过 hook，没有 push。
-
-改动保留在工作区，完整 patch（含新增脚本/测试和 out/compile-native.py）为 `out/root-tun-p0.patch`。
-补丁已在临时的 8f38fc6 基线通过 git apply 检查，应用后的 22 个文件与工作区逐字节一致。
-预期提交分组记录在 `out/root-tun-p0-commits.txt`：
-
-1. feat(android): add independent root tun watchdog (#25)
-2. feat(android): clean root tun after confirmed uninstall (#26)
-3. feat(android): harden service.d autostart and upgrades (#28)
-4. feat(android): clean root tun on permission revocation (#29)
-5. fix(android): address root tun review suggestions
-
-结构自查覆盖：runtime 的 owner/control 锁与代际接管、只读慢探测任务、网络清理唯一职责、boot 入口/设置事务、
-App 授权探测与签名结果交接、Controller recheck 与通道参数边界；未发现本轮需要另行重构的责任归属问题。
-正式交付仍需技术负责人 Review、CI 和上述真机取证；未提交或请求合并 PR。
+本轮遵照要求，未运行 git add/commit/push，未写入 .git 或 ~/.codex；HEAD 保持 `e37003d`。
+改动留在工作区，建议提交分组与逐组文件清单位于 `out/root-tun-p0-r1-commits.txt`；out 下的日志/工具不作为提交内容。
+runtime.sh 的 B1/B3/M1/M2/M3/M4 共用锁、恢复和停止路径，建议同组提交，避免拆出中间不安全状态。
+正式交付仍需技术负责人复审、完整 APK 编译和上述真机取证；未请求合并 PR。
