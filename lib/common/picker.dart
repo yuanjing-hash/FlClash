@@ -11,11 +11,16 @@ class Picker {
     return FilePicker.pickFile(initialDirectory: await appPath.downloadDirPath);
   }
 
-  Future<Uri?> saveFile(String fileName, Uint8List bytes) async {
+  Future<Uri?> saveFile(
+    String fileName,
+    Uint8List bytes, {
+    String mimeType = 'application/octet-stream',
+  }) async {
     final uri = await FilePicker.saveFile(
       fileName: fileName,
       initialDirectory: await appPath.downloadDirPath,
       bytes: bytes,
+      mimeType: mimeType,
     );
     if (!system.isAndroid && uri != null && uri.scheme == 'file') {
       final file = File(uri.toFilePath());

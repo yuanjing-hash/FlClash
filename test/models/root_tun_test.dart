@@ -4,6 +4,23 @@ import 'package:flutter_test/flutter_test.dart';
 import '../support/root_tun.dart';
 
 void main() {
+  test('diagnostics MIME type defaults to ZIP and preserves native values', () {
+    for (final mimeType in [
+      null,
+      'application/zip',
+      'application/x-zip-compressed',
+    ]) {
+      final json = <String, dynamic>{
+        'path': '/data/user/0/app/cache/diagnostics.zip',
+        'sizeBytes': 123,
+        'mimeType': ?mimeType,
+      };
+      final diagnostics = RootTunDiagnostics.fromJson(json);
+      expect(diagnostics.mimeType, mimeType ?? 'application/zip');
+      expect(RootTunDiagnostics.fromJson(diagnostics.toJson()), diagnostics);
+    }
+  });
+
   test('all eight states and supported enum values parse and round trip', () {
     for (final state in RootTunState.values) {
       final json = rootTunSnapshotJson(state: state.name)

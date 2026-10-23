@@ -251,9 +251,17 @@ _RootTunDiagnostics _$RootTunDiagnosticsFromJson(Map<String, dynamic> json) =>
       final val = _RootTunDiagnostics(
         path: $checkedConvert('path', (v) => v as String),
         sizeBytes: $checkedConvert('sizeBytes', (v) => _rootTunInt(v)),
+        mimeType: $checkedConvert(
+          'mimeType',
+          (v) => v as String? ?? 'application/zip',
+        ),
       );
       return val;
     });
 
 Map<String, dynamic> _$RootTunDiagnosticsToJson(_RootTunDiagnostics instance) =>
-    <String, dynamic>{'path': instance.path, 'sizeBytes': instance.sizeBytes};
+    <String, dynamic>{
+      'path': instance.path,
+      'sizeBytes': instance.sizeBytes,
+      'mimeType': instance.mimeType,
+    };

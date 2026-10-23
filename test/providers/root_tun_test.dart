@@ -149,6 +149,79 @@ void main() {
   });
 
   test(
+    'stale state allows every stop reason and recheck but blocks writes',
+    () async {
+      final calls = <MethodCall>[];
+      final snapshot = rootTunSnapshotJson()..['stale'] = true;
+      messenger.setMockMethodCallHandler(methods, (call) async {
+        calls.add(call);
+        if (call.method == 'getState') return rootTunSuccess(snapshot);
+        return rootTunSuccess({
+          'requestId': rootTunMap(call.arguments)['requestId'],
+          'intentRevision': snapshot['intentRevision'],
+          'disposition': 'accepted',
+          'snapshot': snapshot,
+        });
+      });
+      final controller = container.read(rootTunControllerProvider.notifier);
+      await controller.refresh();
+      calls.clear();
+
+      await controller.start();
+      await controller.setAutostart(false);
+      await controller.cleanupResidue();
+      expect(calls, isEmpty);
+
+      for (final reason in RootTunStopReason.values) {
+        await controller.stop(reason);
+        expect(calls.last.method, 'stop');
+        expect(rootTunMap(calls.last.arguments)['reason'], reason.name);
+      }
+      await controller.recheckRoot();
+      expect(calls.map((call) => call.method), [
+        for (final _ in RootTunStopReason.values) 'stop',
+        'getState',
+        'recheckRoot',
+      ]);
+      final value = container.read(rootTunControllerProvider);
+      expect(value.snapshot!.stale, true);
+      expect(value.pendingCommands, 0);
+      expect(value.lastChannelError, isNull);
+    },
+  );
+
+  for (final code in [
+    'notImplemented',
+    'MissingPluginException',
+    'CORE_ERROR',
+  ]) {
+    test('autostart capability handles $code and survives refresh', () async {
+      messenger.setMockMethodCallHandler(methods, (call) async {
+        if (call.method == 'setAutostart') {
+          if (code == 'MissingPluginException') throw MissingPluginException();
+          throw PlatformException(code: code);
+        }
+        return rootTunSuccess(rootTunSnapshotJson());
+      });
+      final controller = container.read(rootTunControllerProvider.notifier);
+      await controller.refresh();
+      expect(
+        container.read(rootTunControllerProvider).autostartSupported,
+        true,
+      );
+
+      await controller.setAutostart(false);
+      await controller.refresh();
+      final value = container.read(rootTunControllerProvider);
+      expect(value.autostartSupported, code == 'CORE_ERROR');
+      expect(value.cleanupSupported, true);
+      expect(value.snapshot!.autostartEnabled, true);
+      expect(value.pendingCommands, 0);
+      expect(value.lastChannelError, contains(code));
+    });
+  }
+
+  test(
     'a timed-out command refreshes state without sending cancellation',
     () async {
       container.dispose();

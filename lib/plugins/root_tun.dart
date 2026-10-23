@@ -47,11 +47,12 @@ class RootTunPlugin {
     Map<String, dynamic> arguments,
     T Function(Map<String, dynamic>) decode, {
     bool command = false,
+    Duration? timeout,
   }) async {
     try {
       final raw = await _methods
           .invokeMethod<Object?>(method, arguments)
-          .timeout(command ? commandTimeout : getterTimeout);
+          .timeout(timeout ?? (command ? commandTimeout : getterTimeout));
       final result = RootTunResult.decode(raw, decode);
       final error = result.error;
       if (error != null && !RootTunCode.values.contains(error.code)) {
@@ -146,7 +147,7 @@ class RootTunPlugin {
           throw const FormatException('Invalid diagnostics file');
         }
         return file;
-      }, command: true);
+      }, timeout: const Duration(seconds: 20));
 
   Stream<RootTunEvent> events(RootTunSnapshot snapshot) {
     late final StreamController<RootTunEvent> controller;

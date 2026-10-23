@@ -1,3 +1,7 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:fl_clash/common/constant.dart';
 import 'package:fl_clash/models/root_tun.dart';
 import 'package:fl_clash/providers/app.dart';
@@ -10,8 +14,33 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
+import '../helpers/app_paths.dart';
 import '../helpers/test_app.dart';
 import '../support/root_tun.dart';
+
+class _SavingPicker extends FilePickerPlatform {
+  final saved = Completer<void>();
+  String? savedMimeType;
+  Uint8List? savedBytes;
+
+  @override
+  Future<Uri?> saveFile({
+    required String fileName,
+    required Uint8List bytes,
+    required String mimeType,
+    String? dialogTitle,
+    String? initialDirectory,
+    Function(FilePickerStatus)? onFileSaving,
+    WindowsOptions windowsOptions = const WindowsOptions(),
+    LinuxOptions linuxOptions = const LinuxOptions(),
+    WebOptions webOptions = const WebOptions(),
+  }) async {
+    savedMimeType = mimeType;
+    savedBytes = bytes;
+    saved.complete();
+    return null;
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -22,8 +51,20 @@ void main() {
   late ProviderContainer container;
   late Map<String, dynamic> snapshot;
   late List<MethodCall> calls;
+  late String? autostartError;
+  late Map<String, dynamic>? diagnostics;
+  late Directory directory;
+  late FilePickerPlatform originalPicker;
+  late _SavingPicker savingPicker;
 
-  setUp(() {
+  setUp(() async {
+    directory = await Directory.systemTemp.createTemp('root_tun_view_');
+    await useAppPaths(directory);
+    originalPicker = FilePickerPlatform.instance;
+    savingPicker = _SavingPicker();
+    FilePickerPlatform.instance = savingPicker;
+    autostartError = null;
+    diagnostics = null;
     container = ProviderContainer();
     globalState.container = container;
     container.read(viewSizeProvider.notifier).value = const Size(400, 1800);
@@ -39,6 +80,15 @@ void main() {
       if (call.method == 'getState' || call.method == 'detectRoot') {
         return rootTunSuccess(snapshot);
       }
+      if (call.method == 'setAutostart' && autostartError != null) {
+        if (autostartError == 'MissingPluginException') {
+          throw MissingPluginException();
+        }
+        throw PlatformException(code: autostartError!);
+      }
+      if (call.method == 'exportDiagnostics' && diagnostics != null) {
+        return rootTunSuccess(diagnostics!);
+      }
       if (call.method == 'exportDiagnostics' || call.method == 'getLogs') {
         throw MissingPluginException();
       }
@@ -51,10 +101,12 @@ void main() {
       });
     });
   });
-  tearDown(() {
+  tearDown(() async {
     container.dispose();
     messenger.setMockMethodCallHandler(methods, null);
     messenger.setMockMethodCallHandler(events, null);
+    FilePickerPlatform.instance = originalPicker;
+    await directory.delete(recursive: true);
   });
 
   Future<void> pump(
@@ -108,6 +160,84 @@ void main() {
     },
   );
 
+  for (final active in [false, true]) {
+    testWidgets(
+      'stale switch permits disabling only (active=$active) and recheck',
+      (tester) async {
+        snapshot = rootTunSnapshotJson(
+          state: active ? 'running' : 'disabled',
+          enabled: active,
+          autostart: false,
+        )..['stale'] = true;
+        await pump(tester);
+        expect(find.textContaining('状态核对中'), findsOneWidget);
+        final toggle = tester.widget<Switch>(find.byType(Switch).first);
+        expect(toggle.value, active);
+        expect(toggle.onChanged, active ? isNotNull : isNull);
+        expect(
+          tester.widget<Switch>(find.byType(Switch).last).onChanged,
+          isNull,
+        );
+        if (active) {
+          await tester.tap(find.byType(Switch).first);
+          await tester.pumpAndSettle();
+          expect(
+            rootTunMap(
+              calls.lastWhere((call) => call.method == 'stop').arguments,
+            )['reason'],
+            'disable',
+          );
+        }
+        await tester.tap(find.text('重新检测'));
+        await tester.pumpAndSettle();
+        expect(calls.any((call) => call.method == 'recheckRoot'), true);
+        expect(calls.where((call) => call.method == 'start'), isEmpty);
+      },
+    );
+  }
+
+  for (final code in ['notImplemented', 'MissingPluginException']) {
+    testWidgets('unsupported autostart is hidden after $code', (tester) async {
+      snapshot = rootTunSnapshotJson(autostart: false);
+      autostartError = code;
+      await pump(tester);
+      expect(find.text('开机自启'), findsOneWidget);
+      await tester.tap(find.byType(Switch).last);
+      await tester.pumpAndSettle();
+      expect(calls.any((call) => call.method == 'setAutostart'), true);
+      expect(find.text('开机自启'), findsNothing);
+      expect(find.byType(Switch), findsOneWidget);
+      expect(
+        container.read(rootTunControllerProvider).lastChannelError,
+        contains(code),
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('Flutter saves diagnostics with the native MIME type', (
+    tester,
+  ) async {
+    final file = File('${directory.path}/diagnostics.zip');
+    final bytes = Uint8List.fromList([80, 75, 3, 4]);
+    await tester.runAsync(() => file.writeAsBytes(bytes));
+    diagnostics = {
+      'path': file.path,
+      'sizeBytes': bytes.length,
+      'mimeType': 'application/x-zip-compressed',
+    };
+    await pump(tester);
+    await tester.ensureVisible(find.text('导出诊断日志'));
+    await tester.runAsync(() async {
+      await tester.tap(find.text('导出诊断日志'));
+      await savingPicker.saved.future.timeout(const Duration(seconds: 5));
+    });
+    await tester.pumpAndSettle();
+    expect(savingPicker.savedMimeType, diagnostics!['mimeType']);
+    expect(savingPicker.savedBytes, bytes);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'KernelSU awaitingAuth has manager guidance, recheck and cancel without a countdown',
     (tester) async {
@@ -116,7 +246,7 @@ void main() {
         auth: 'notGranted',
         autostart: false,
         error: RootTunCode.rootGrantRequiredInManager,
-      );
+      )..['stale'] = true;
       await pump(tester);
       await tester.tap(find.text('确定').last);
       await tester.pumpAndSettle();
@@ -171,7 +301,7 @@ void main() {
     snapshot = rootTunSnapshotJson(
       state: 'failed',
       error: RootTunCode.coreStartFailed,
-    );
+    )..['stale'] = true;
     await pump(tester);
     expect(tester.widget<Switch>(find.byType(Switch).first).value, false);
     expect(tester.widget<Switch>(find.byType(Switch).last).value, false);

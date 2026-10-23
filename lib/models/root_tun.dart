@@ -131,6 +131,7 @@ abstract class RootTunDiagnostics with _$RootTunDiagnostics {
   const factory RootTunDiagnostics({
     @JsonKey(required: true) required String path,
     @JsonKey(required: true, fromJson: _rootTunInt) required int sizeBytes,
+    @Default('application/zip') String mimeType,
   }) = _RootTunDiagnostics;
 
   factory RootTunDiagnostics.fromJson(Map<String, dynamic> json) =>
@@ -334,6 +335,7 @@ abstract class RootTunViewState with _$RootTunViewState {
     RootTunEvent? event,
     @Default(0) int pendingCommands,
     @Default(true) bool cleanupSupported,
+    @Default(true) bool autostartSupported,
   }) = _RootTunViewState;
 }
 

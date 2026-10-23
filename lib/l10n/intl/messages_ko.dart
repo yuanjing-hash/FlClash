@@ -1363,7 +1363,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "rootTunOpenManager": MessageLookupByLibrary.simpleMessage("Open manager"),
     "rootTunRecheck": MessageLookupByLibrary.simpleMessage("Check again"),
     "rootTunStale": MessageLookupByLibrary.simpleMessage(
-      "State is unverified. Check again before changing settings.",
+      "상태 확인 중입니다. 다시 확인하거나 Root TUN을 중지할 수 있습니다.",
     ),
     "rootTunStateAwaitingAuth": MessageLookupByLibrary.simpleMessage(
       "Awaiting authorization",

@@ -148,9 +148,12 @@ class RootTunController extends _$RootTunController {
   }
 
   Future<void> _command(
-    Future<RootTunResult<RootTunAck>> Function() invoke,
-  ) async {
-    if (_disposed || state.snapshot?.stale != false) return;
+    Future<RootTunResult<RootTunAck>> Function() invoke, {
+    bool allowWhenStale = false,
+  }) async {
+    if (_disposed || (!allowWhenStale && state.snapshot?.stale != false)) {
+      return;
+    }
     state = state.copyWith(
       pendingCommands: state.pendingCommands + 1,
       commandError: null,
@@ -163,10 +166,14 @@ class RootTunController extends _$RootTunController {
       if (result.error != null) await refresh();
     } catch (error) {
       if (error is RootTunChannelException &&
-          error.method == 'cleanupResidue' &&
           error.notImplemented &&
           !_disposed) {
-        state = state.copyWith(cleanupSupported: false);
+        if (error.method == 'cleanupResidue') {
+          state = state.copyWith(cleanupSupported: false);
+        }
+        if (error.method == 'setAutostart') {
+          state = state.copyWith(autostartSupported: false);
+        }
       }
       _failure(error);
       await refresh();
@@ -179,10 +186,10 @@ class RootTunController extends _$RootTunController {
 
   Future<void> start() => _command(_plugin.start);
   Future<void> stop(RootTunStopReason reason) =>
-      _command(() => _plugin.stop(reason));
+      _command(() => _plugin.stop(reason), allowWhenStale: true);
   Future<void> recheckRoot() async {
     await refresh();
-    await _command(_plugin.recheckRoot);
+    await _command(_plugin.recheckRoot, allowWhenStale: true);
   }
 
   Future<void> setAutostart(bool enabled) =>

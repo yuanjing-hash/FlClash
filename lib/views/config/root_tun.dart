@@ -150,8 +150,12 @@ class _RootTunSectionState extends ConsumerState<RootTunSection>
       if (await File(localPath).length() != file.sizeBytes) {
         throw const FormatException('Diagnostics size mismatch');
       }
-      final bytes = await Isolate.run(() => File(localPath).readAsBytesSync());
-      final saved = await picker.saveFile(p.basename(localPath), bytes);
+      final bytes = await Isolate.run(File(localPath).readAsBytesSync);
+      final saved = await picker.saveFile(
+        p.basename(localPath),
+        bytes,
+        mimeType: file.mimeType,
+      );
       if (mounted && saved != null) await _explain(l.exportSuccess);
     } catch (error) {
       if (!mounted) return;
@@ -199,10 +203,11 @@ class _RootTunSectionState extends ConsumerState<RootTunSection>
         value.channelAvailable == null
             ? l.rootTunLoading
             : l.rootTunNativeUnavailable,
-      if (!unavailable && stale) l.rootTunStale,
+      if (snapshot != null && stale) l.rootTunStale,
       ?errorText,
     ].join('\n');
     final enabled = !unavailable && !stale && !degraded && !busy;
+    final canToggle = !busy && (active || enabled);
     final awaiting = snapshot?.state == RootTunState.awaitingAuth;
     final managerAuth =
         awaiting &&
@@ -216,7 +221,7 @@ class _RootTunSectionState extends ConsumerState<RootTunSection>
           subtitle: message.isEmpty ? null : Text(message),
           trailing: Switch(
             value: active,
-            onChanged: enabled
+            onChanged: canToggle
                 ? (on) => on
                       ? _controller.start()
                       : _controller.stop(
@@ -226,7 +231,7 @@ class _RootTunSectionState extends ConsumerState<RootTunSection>
                         )
                 : null,
           ),
-          onTap: enabled
+          onTap: canToggle
               ? () => active
                     ? _controller.stop(
                         awaiting
@@ -236,14 +241,15 @@ class _RootTunSectionState extends ConsumerState<RootTunSection>
                     : _controller.start()
               : () => _explain(message),
         ),
-        ListItem.toggle(
-          title: Text(l.rootTunAutostart),
-          value: active && snapshot.autostartEnabled,
-          onChanged:
-              enabled && active && snapshot.authStatus == AuthStatus.granted
-              ? _controller.setAutostart
-              : null,
-        ),
+        if (value.autostartSupported)
+          ListItem.toggle(
+            title: Text(l.rootTunAutostart),
+            value: active && snapshot.autostartEnabled,
+            onChanged:
+                enabled && active && snapshot.authStatus == AuthStatus.granted
+                ? _controller.setAutostart
+                : null,
+          ),
         ListItem(
           title: Text(l.rootTunMode),
           subtitle: Text(
@@ -290,7 +296,7 @@ class _RootTunSectionState extends ConsumerState<RootTunSection>
         if (awaiting)
           ListItem(
             title: Text(l.cancel),
-            onTap: busy || stale
+            onTap: busy
                 ? null
                 : () => _controller.stop(RootTunStopReason.cancelAuth),
           ),
@@ -303,7 +309,7 @@ class _RootTunSectionState extends ConsumerState<RootTunSection>
         if (snapshot?.state == RootTunState.failed)
           ListItem(
             title: Text(l.confirm),
-            onTap: busy || stale
+            onTap: busy
                 ? null
                 : () => _controller.stop(RootTunStopReason.acknowledgeFailure),
           ),
