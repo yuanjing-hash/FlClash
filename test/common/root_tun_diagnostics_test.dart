@@ -50,11 +50,7 @@ void main() {
   late _TrackedFile tracked;
   late RootTunDiagnostics diagnostics;
   late int shares;
-  late int selections;
   late ShareParams? shared;
-  late String? selectedName;
-  late String? selectedMimeType;
-  late String? destination;
   late ShareResultStatus shareStatus;
 
   setUp(() async {
@@ -75,11 +71,7 @@ void main() {
       mimeType: 'application/x-zip-compressed',
     );
     shares = 0;
-    selections = 0;
     shared = null;
-    selectedName = null;
-    selectedMimeType = null;
-    destination = p.join(directory.path, 'export.zip');
     shareStatus = ShareResultStatus.success;
   });
 
@@ -97,12 +89,6 @@ void main() {
         shared = params;
         return ShareResult('test', shareStatus);
       },
-      selectSavePath: (name, mimeType) async {
-        selections++;
-        selectedName = name;
-        selectedMimeType = mimeType;
-        return destination;
-      },
     );
   }
 
@@ -118,7 +104,7 @@ void main() {
           export(diagnostics.copyWith(path: path)),
           throwsFormatException,
         );
-        expect(shares + selections, 0);
+        expect(shares, 0);
       },
     );
   }
@@ -141,7 +127,7 @@ void main() {
           ),
         ),
       );
-      expect(shares + selections, 0);
+      expect(shares, 0);
     },
   );
 
@@ -157,14 +143,14 @@ void main() {
         export(diagnostics.copyWith(path: link.path)),
         throwsFormatException,
       );
-      expect(shares + selections, 0);
+      expect(shares, 0);
     },
   );
 
   test('propagates a missing source without opening an export UI', () async {
     await source.delete();
     await expectLater(export(diagnostics), throwsA(isA<FileSystemException>()));
-    expect(shares + selections, 0);
+    expect(shares, 0);
   });
 
   test('rejects negative sizes', () async {
@@ -172,7 +158,7 @@ void main() {
       export(diagnostics.copyWith(sizeBytes: -1)),
       throwsFormatException,
     );
-    expect(shares + selections, 0);
+    expect(shares, 0);
   });
 
   test('rejects a size mismatch before reading or exporting', () async {
@@ -187,7 +173,7 @@ void main() {
       ),
     );
     expect(tracked.streamReads, 0);
-    expect(shares + selections, 0);
+    expect(shares, 0);
   });
 
   test(
@@ -195,7 +181,6 @@ void main() {
     () async {
       expect(await export(diagnostics), true);
       expect(shares, 1);
-      expect(selections, 0);
       expect(shared!.files!.single.path, await source.resolveSymbolicLinks());
       expect(shared!.files!.single.mimeType, diagnostics.mimeType);
       expect(tracked.streamReads, 0);
@@ -259,54 +244,15 @@ void main() {
     expect(await source.exists(), true);
   });
 
-  test('desktop copies the source stream to the selected path', () async {
-    expect(
-      await exporter(
-        isAndroid: false,
-      ).export(diagnostics, homeDirectory: homeDirectory),
-      true,
-    );
-    expect(selectedName, 'diagnostics.zip');
-    expect(selectedMimeType, diagnostics.mimeType);
-    expect(shares, 0);
-    expect(selections, 1);
-    expect(tracked.streamReads, 1);
-    expect(await File(destination!).readAsBytes(), await source.readAsBytes());
-    expect(await source.exists(), true);
-  });
-
-  test('desktop cancellation does not read or delete the source', () async {
-    destination = null;
-    expect(
-      await exporter(
-        isAndroid: false,
-      ).export(diagnostics, homeDirectory: homeDirectory),
-      false,
-    );
-    expect(tracked.streamReads, 0);
-    expect(await source.length(), diagnostics.sizeBytes);
-  });
-
-  test('selecting the source on desktop does not truncate it', () async {
-    destination = source.path;
-    expect(
-      await exporter(
-        isAndroid: false,
-      ).export(diagnostics, homeDirectory: homeDirectory),
-      true,
-    );
-    expect(tracked.streamReads, 0);
-    expect(await source.length(), diagnostics.sizeBytes);
-  });
-
-  test('desktop write failures propagate and keep the source', () async {
-    destination = p.join(directory.path, 'missing', 'export.zip');
+  test('non-Android platforms are rejected before touching the file', () async {
     await expectLater(
       exporter(
         isAndroid: false,
       ).export(diagnostics, homeDirectory: homeDirectory),
-      throwsA(isA<FileSystemException>()),
+      throwsA(isA<UnsupportedError>()),
     );
+    expect(shares, 0);
+    expect(tracked.streamReads, 0);
     expect(await source.length(), diagnostics.sizeBytes);
   });
 }

@@ -34,9 +34,9 @@ Android 的「网络」设置在 VPN 区附近显示 Root TUN 开关、开机自
 `lib/common/root_tun_diagnostics.dart` 的 `RootTunDiagnosticsExporter` 先解析文件与 App 私有目录的符号链接，使用 `isWithin` 验证路径归属，再核对实际长度与 `sizeBytes`；校验失败不打开保存/分享面板。
 
 - Android 使用 Flutter Community 的 `share_plus` 13.3.1，以 `XFile(path, mimeType: ...)` 调起系统分享面板，用户选择接收应用（可用的保存目标取决于设备上安装的应用）。Dart 平台通道只传路径与 MIME 类型；插件在后台通过 Kotlin `File.copyTo` 的缓冲流复制到自己的分享缓存，再通过 FileProvider 授予接收方 URI 访问权限，Dart 和插件都不整包读入内存。此方式需要额外一份磁盘缓存。分享结果 `success` 表示已选择接收应用，不能保证接收应用已经完成保存；取消或结果不可用不提示成功，也不删除源诊断包。
-- 桌面使用 Flutter 官方的 `file_selector` 选择目标路径，再用 `File.openRead().pipe(File.openWrite())` 流式复制，保留原生返回的文件名和 MIME 类型。取消不读取文件内容，选择源文件本身时不覆盖它。
+- Root TUN 只在 Android 上提供，导出器在其他平台直接抛出 `UnsupportedError`，不读取文件。
 
-新增依赖的原因：现有 `picker.saveFile` 和 `saveFileWithPath` 都要求整包 bytes；file_picker 12.3.0 的 `saveFile` 强制接收 `Uint8List`，Android 实现通过 MethodChannel 将 bytes 交给原生写入 SAF，未提供源路径保存或 URI 分块写入接口。桌面实现也会直接写入 bytes，无法安全地用空 bytes 只选择路径。故选用上述主流/官方包，无需修改 Kotlin/Go、packageName 或 applicationId。源诊断包的文件轮换仍由 Root TUN 原生端负责。
+新增依赖的原因：现有 `picker.saveFile` 和 `saveFileWithPath` 都要求整包 bytes；file_picker 12.3.0 的 `saveFile` 强制接收 `Uint8List`，Android 实现通过 MethodChannel 将 bytes 交给原生写入 SAF，未提供源路径保存或 URI 分块写入接口。故 Android 改用主流的 `share_plus`，无需修改 Kotlin/Go、packageName 或 applicationId。源诊断包的文件轮换仍由 Root TUN 原生端负责。
 
 ## 验证与手测
 

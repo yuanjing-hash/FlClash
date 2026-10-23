@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:fl_clash/common/constant.dart';
@@ -21,7 +20,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   const methods = MethodChannel('$packageName/root_tun');
   const events = MethodChannel('$packageName/root_tun/events');
-  const selector = MethodChannel('plugins.flutter.io/file_selector');
+  const share = MethodChannel('dev.fluttercommunity.plus/share');
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   late ProviderContainer container;
@@ -30,15 +29,15 @@ void main() {
   late String? autostartError;
   late Map<String, dynamic>? diagnostics;
   late Directory directory;
-  late Completer<MethodCall> saveRequested;
+  late List<MethodCall> shareCalls;
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('root_tun_view_');
     await useAppPaths(directory);
-    saveRequested = Completer<MethodCall>();
-    messenger.setMockMethodCallHandler(selector, (call) async {
-      saveRequested.complete(call);
-      return null;
+    shareCalls = [];
+    messenger.setMockMethodCallHandler(share, (call) async {
+      shareCalls.add(call);
+      return 'test.target';
     });
     autostartError = null;
     diagnostics = null;
@@ -82,7 +81,7 @@ void main() {
     container.dispose();
     messenger.setMockMethodCallHandler(methods, null);
     messenger.setMockMethodCallHandler(events, null);
-    messenger.setMockMethodCallHandler(selector, null);
+    messenger.setMockMethodCallHandler(share, null);
     await directory.delete(recursive: true);
   });
 
@@ -193,7 +192,7 @@ void main() {
   }
 
   testWidgets(
-    'Flutter selects a diagnostic destination with the native MIME type',
+    'diagnostic export is Android only and never opens a desktop save dialog',
     (tester) async {
       final file = File('${directory.path}/diagnostics.zip');
       final bytes = Uint8List.fromList([80, 75, 3, 4]);
@@ -205,23 +204,15 @@ void main() {
       };
       await pump(tester);
       await tester.ensureVisible(find.text('导出诊断日志'));
-      MethodCall? selection;
       await tester.runAsync(() async {
         await tester.tap(find.text('导出诊断日志'));
-        selection = await saveRequested.future.timeout(
-          const Duration(seconds: 5),
-        );
+        await Future<void>.delayed(const Duration(milliseconds: 200));
       });
       await tester.pumpAndSettle();
-      expect(selection!.method, 'getSavePath');
-      final arguments = rootTunMap(selection!.arguments);
-      expect(arguments['suggestedName'], 'diagnostics.zip');
-      final typeGroup = rootTunMap(
-        (arguments['acceptedTypeGroups'] as List).single,
-      );
-      expect(typeGroup['mimeTypes'], [diagnostics!['mimeType']]);
-      expect(arguments.containsKey('bytes'), false);
+      expect(calls.map((call) => call.method), contains('exportDiagnostics'));
+      expect(shareCalls, isEmpty);
       expect(find.text('导出成功'), findsNothing);
+      expect(await tester.runAsync(file.exists), true);
       expect(tester.takeException(), isNull);
     },
   );
