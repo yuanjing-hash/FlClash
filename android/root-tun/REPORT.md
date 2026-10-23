@@ -1,137 +1,173 @@
-# Android Root TUN 原生最小实现
+# Android Root TUN：方案 B 的 P0 后续实现
 
-分支 `feature/root-tun-native`，2026-10-23。仅修改当前 worktree，未 push。
-这是供 Flutter 接入和真机联调的原生实现；**本机未产出 APK，不能据此宣称真机可用或完整 P0 验收通过**。
+工作分支：`feature/root-tun-p0`；基线：`feature/root-tun-native@8f38fc6`（PR #22 二次复审通过）。
+本轮完成 #25/#26/#28/#29 的代码与宿主模拟，以及复审中的非阻塞建议。
+**尚未完成真机验收；不能据此关闭四个 P0、合入 main 或宣称方案 B 已通过验收。**
 
-## 文件与行为
+唯一运行目录为 `/data/adb/flclash-root/`（R），唯一开机入口为 `/data/adb/service.d/flclash-root.sh`。
+不改 Dart、`com.follow.clash` 包名/通道常量、构建 ABI 和已有 VPN 后端；未启动宿主 FlClash，未修改宿主网络，未 push。
 
-- `app/src/main/kotlin/com/follow/clash/root/`：有界、可取消的 su 执行；root 管理器/授权检测；协议模型；配置及资源安装；状态/请求仲裁；DNS 自检；通知；诊断导出。
-- `app/src/main/kotlin/com/follow/clash/plugins/RootTunPlugin.kt`、`MainActivity.kt`：注册 MethodChannel/EventChannel；导出仅返回 ZIP，保存/分享由 Flutter 负责。
-- `ServiceState.kt`：Root 入口仍由此持有；启动 Root 先取消并停止旧服务；Root 模式阻止原 VPN start；切回 VPN 必须先 `stop(switchToVpn)`。磁贴/快捷方式的启动/停止转交 Root 后端。
-- `app/src/main/assets/root-tun/runtime.sh`：独立 su 后台监督进程。唯一写网络规则和启动核心的组件；PID 同时核对 startTicks 和 boot ID。崩溃后恢复，5 分钟第 3 次崩溃熔断；恢复失败清理规则；清理失败保持 stopping 并重试。
-- `root-tun/build.gradle.kts`、`root-tun/build-core.sh`：Gradle 自动构建独立 mihomo，按 ABI 作为 `libroot_mihomo.so` 加入 generated jniLibs；保留可执行 ELF，不调用 System.loadLibrary。
-- `settings.gradle.kts`、`app/build.gradle.kts`、manifest、XML/中英文资源：所有构建的 applicationId 为 `com.follow.clash.root`；namespace/两个 packageName 常量不改。仅 arm64-v8a/x86_64、useLegacyPackaging、非 VPN 前台服务；已移除 extractNativeLibs 和诊断 FileProvider。SAFE_MODE 返回 CORE_START_FAILED、retryable=false、reason=SAFE_MODE。
-- `app/src/main/assets/root-tun/service.d.sh`：安装为 `/data/adb/service.d/flclash-root.sh`，后台等待 boot_completed，检查持久化开关和配置，同一 boot 只提交一次启动。
-- `app/src/main/assets/root-tun/diagnostics.sh`：一次 su/sh 采集带分段标记的诊断，等待预算 9 秒（双流收尾最多再等 600ms）。
-- `android/tests/app/root/`：su 转义/双流/超时/输出界限、状态枚举/空字段、DNS 响应校验、日志脱敏。
+## #25：独立 watchdog
 
-配置来源为 App `filesDir/config.yaml`，不是示例空配置。保留节点/规则/DNS，迁移本地 provider/geo 文件；路径限于 App filesDir，单文件 256 MiB、总额 512 MiB。select 组按 SharedState selected-map 排序，优先保留当前选中项。测试配置成功才引流。
+实现位于 `app/src/main/assets/root-tun/runtime.sh`。
 
-强制 gVisor TUN、auto-route、auto-detect-interface、strict-route、any:53；不使用 VpnService fd。独占表 2022、pref 8990–9011、`flcrtun0`、FCR_OUTPUT；启动前整段查空。使用 routing-mark `0x40000000` + goto 越过接管区，未沿用 spike 的 UID 0 全体豁免。控制器只绑定随机的 127.0.0.1 TCP 端口并使用每次生成的 token；关闭其他入站和外部 UI。IPv6 业务在 OUTPUT 阻断，仅放行 loopback 和 NDP。私人 DNS 自动模式拒绝非核心 853，严格模式保留服务器、通过 warnings 提示。
+- supervisor 与 watchdog 分别通过 `nohup + setsid + 二次 fork` 启动，关闭 stdin/stdout/stderr 的 su 管道继承。
+  PID、锁、代际和心跳均放在 R/run；PID 同时核对 `/proc/<pid>/stat` startTicks、boot_id，并排除 zombie。
+- 两个心跳文件采用 TDD §6.3 的 JSON 字段：schemaVersion、pid、startTicks、bootId、bootMs、sessionId；
+  当前 sessionId 使用监督代际，期限使用 boot 单调秒。watchdog 每秒循环，supervisor 重建失联 watchdog。
+- `owner.lock` 保持唯一网络/状态写者；watchdog 仅在接管时终止已核验的旧 supervisor、递增 generation 后写状态。
+  core 的 PID、API、TUN 和网络规则健康时交给新 supervisor；否则清理并进入 `failed(CORE_RECOVERY_FAILED)`。
+- core 崩溃恢复保留接管及 DNS/IPv6 防漏规则，只重启 core；IPv4 FCR_OUTPUT 增加非 TUN 出口拒绝规则，
+  防止 TUN 消失后回落到物理网络。恢复失败才 cleanup/fail-open。恢复起止单调时间写入 supervisor.log。
+- 5 分钟崩溃窗口持久化在 R/run，跨 supervisor 接管保留；第 3 次进入 CORE_CRASH_LOOP。
+  旧 boot 的 PID、网络所有权和崩溃记录不被当成当前 boot 的资源。
+- watchdog 的退出 trap 仅释放自己的 PID、探测子进程和锁，不拆正在运行的规则。正常 stop 结束 supervisor/core/watchdog 和已记录的 boot 任务；
+  失败态保留卸载监护。watchdog.log 按当前/上一份 2×1MiB 轮换。
 
-原生确认 API、TUN UP/路由及来自 App UID 的 UDP/TCP DNS 应答后显示 running。关闭时 TERM 精确核心 PID，必要时 KILL；只清理已保留所有权的表/优先级/链/接口，不全局 flush/restore。发现未认领的冲突时拒绝删规则。运行时文件仅写 `/data/adb/flclash-root/`；App 自身状态缓存、分享 ZIP 仍在 App 私有目录。
+模拟覆盖：单实例、慢 pm 不阻塞心跳、watchdog TERM/KILL 后服务继续、supervisor 接管不重启 core、
+core 恢复不拆规则、supervisor/core 同时死亡后清理及空 restore-diff、正常 stop、旧版本监督进程接管、跨接管熔断。
 
-## Flutter 契约
+真机必验：小米 17 Pro Max（Android 17，KernelSU）上结束 su 会话/强停 App 后仍存活；
+watchdog 重建 ≤3s，恢复或 fail-open ≤30s，清理 ≤3s；抓包证明恢复期间业务/DNS 不直连。
+setsid 不等于已经证明 KernelSU 的会话/cgroup 行为，脚本模拟也不能证明真实 netlink/iptables 时延。
 
-通道固定为 `com.follow.clash/root_tun` 和 `com.follow.clash/root_tun/events`，StandardMethodCodec 的 Map/List/标量，**不是 JSON 字符串**。所有可空字段显式返回 null。
+## #26：精确卸载检测
 
-| 方法 | 参数 | data |
+`runtime.sh` 的 package 探测在独立短任务中执行，watchdog 每 10 秒触发；每次都有短超时，结果带任务 ID。
+固定查询 `pm path com.follow.clash.root` 和该包的 `pm list packages`，同时检查 `/data/data/com.follow.clash.root`。
+只接受完整行 `package:com.follow.clash.root`，不依赖 APK 安装路径的命名，也不匹配官方版或同前缀包。
+
+- 连续两次包、目录均不存在才清理。超时、包服务错误、格式异常或互相矛盾的结果都是 unknown，并清零连续计数。
+- AOSP 的 `pm path` 在包不存在时正常返回 1。因此仅当其输出为空，且第二次独立的精确 list 查询成功确认不存在时，
+  才视为 absence；不是把任意非零退出当成卸载。Binder/命令失败和超时均不计数。
+- cleanup 完成后，只删除带已知 v1/v2 marker 的那一个 service.d 文件，再删除 R、自退出。
+  删除 R 前用 `log -t FlClashRoot` 记录判定与清理结果；清理失败保留 R 并重试。
+- boot 也执行相同的连续确认，覆盖卸载期间关机；不依赖 App 回调。
+
+TDD §5/W5 的实现口径：`pm uninstall -k` 保留精确数据目录时不判定卸载；升级时只要目录仍在，也不删除 R。
+授权记录另行明确撤销仍会触发 #29 的网络清理。此口径记录于本 REPORT，外部 TDD 尚需技术负责人同步回填。
+
+模拟覆盖：完整包名/相似包、pm 失败/超时/Binder 错误、Android exit 1、保留数据、连续计数重置、
+自有入口删除/其他入口保留、logcat 留痕。真机须分别验证系统卸载、pm uninstall、覆盖升级、卸载官方版，
+证明 ≤60s 清理、重启无残留；保留数据卸载按上述 W5 口径验收。
+
+## #28：service.d 与自启完善
+
+- `service.d.sh` 是 v2 薄入口，只定位 R 并脱离前台调用 runtime。runtime 缺失时只删除已知 marker 的自有入口。
+  当前兼容 v1/v2；不认识的 marker、符号链接和其他文件不覆盖、不删除。
+- runtime 等待 boot_completed 最多 120s，等待用户 0 解锁最多 300s；每 2 秒重查，解锁查询本身有超时。
+  解锁后最多 50s 等包/网络依赖，另留 10s 启动。配置异常或依赖超时保持直连并记录 AUTOSTART_FAILED。
+- 原子 `config/settings.json` 为规范化的 schemaVersion/rootTunEnabled/autostartEnabled；兼容既有两个开关文件。
+  仅双开关都为 true 才提交启动。单个 R/run/boot-id 覆盖写入，不继续累积 boot-* 目录；
+  升级时只 rmdir 精确 UUID 命名的旧空目录。boot.log 按 2×1MiB 轮换。
+- control/owner 锁和同 boot 标记使重复入口/App 启动收敛到一组进程。proxyStop 保留自启设置，
+  当前 boot 的延迟启动不能覆盖 stop；新 boot 可再次启动。disable/switchToVpn 关闭自启并删除运行目录。
+- Kotlin setAutostart 保持异步 Ack，原子写临时入口、chmod 0700/chown 0:0、mv，并同步配置和实际开关状态。
+  开启前要求功能已开启且获权；关闭仅删除已知自有入口。文件事务 su 等待预算为 2.3s，保留流收尾预算。
+- 接入健康运行实例时原子更新脚本和已知旧入口；旧 supervisor 通过接管切换，不重建 core/TUN，补齐恢复防漏规则。
+
+模拟覆盖：重复 boot、proxyStop 后新 boot、自启关闭、损坏配置、boot/依赖超时、旧空目录清理、
+日志轮换、runtime 缺失、未知 marker/软链接保护及旧监督进程接管。
+真机须验证：不打开 App，解锁后 ≤60s running；开关各 10 次；App/boot 并发、升级连接中断 ≤3s；
+0700/root:root、Magisk/APatch 的 service.d 时序、300s 后才解锁的明确失败行为。
+
+## #29：授权撤销检测
+
+`authorization.sh` 只读管理器记录；不把 daemon 自身 UID=0 当成 App 授权证明。
+
+| 路径 | 当前实现 | 验证边界 |
 | --- | --- | --- |
-| getState | `{}` | Snapshot；仅本地镜像，不触发 su |
-| detectRoot | `{}` | Snapshot；Magisk 不触发授权弹窗；KSU/APatch 探测 id |
-| start / requestAuth | `{requestId: UUID}` | Ack，最终结果通过事件/getState |
-| recheckRoot | `{requestId: UUID}` | Ack；KSU/APatch 未授权保持 awaitingAuth；授权后继续未取消的启动；旧会话仍健康时接入，避免重启核心 |
-| stop | `{requestId, reason}` | Ack；reason 为 proxyStop/disable/switchToVpn/cancelAuth/acknowledgeFailure |
-| cleanupResidue | `{requestId}` | Ack；停止并清理、关闭功能和自启 |
-| getLogs | `{cursor:null或String, limit:1..500}`，默认 null/200 | `{sourcePath,entries:[{cursor,at,level,code,message}],nextCursor,eof}` |
-| exportDiagnostics | `{requestId: UUID}` | `{path,sizeBytes,mimeType:"application/zip"}`；path 在 App 私有 cache 下，Flutter 保存/分享 |
-| setAutostart | `{requestId: UUID,enabled: bool}` | Ack；序列化写入/删除唯一入口，文件事务后事件反映实际文件状态，不隐含启动 |
+| App 存活 | App UID 执行短超时 `su -c 'id -u'`，探测间隔约 2s + 至多 1s 执行；连续两次明确拒绝才发 revoked | 超时、可执行文件不可用和无法分类的失败为 unknown；实际管理器拒绝输出待 W3 |
+| KernelSU | 解析 `/data/adb/ksu/.allowlist`：magic、v2/v3 的 776 字节及 v4 的 784 字节记录，精确 package/UID/allow_su | 依据上游 UAPI；格式/版本/长度异常为 unknown；**未在目标手机核实，W3 未关闭** |
+| Magisk | `magisk --sqlite` 精确查 app UID 的 policy/until；识别拒绝、删除记录和过期 | 兼容命令与固定安装路径；执行失败、超时、未知输出不计拒绝；待实机 |
+| APatch | 读取 `/data/adb/ap/package_config`，校验 CSV 结构并精确 package/UID/allow | 已知无引号格式；未知格式不计拒绝；待实机 |
 
-返回包装：
+watchdog 的慢探测子任务每约 2s 调度，已有任务未结束时不重入，不阻塞每秒心跳。
+管理器连续两次明确拒绝，或 App 已确认撤权，才持 control/owner 锁停止旧 supervisor、清理网络、关闭自启，
+随后写 `failed(ROOT_PERMISSION_REVOKED)` 与 authStatus=revoked。清理失败保持 stopping+CLEANUP_FAILED，
+持久化撤权原因继续重试，不提前宣称已直连。boot 在写规则前先验证管理器有效授权；unknown 放弃启动，
+明确撤销则 cleanup、记录 AUTOSTART_ROOT_REVOKED，并尝试通过 `cmd notification post` 发系统通知。
 
-```json
-{"ok":true,"data":{"requestId":"7fb480b6-08a9-4113-8505-912671462d51","intentRevision":1,"disposition":"accepted","snapshot":{"schemaVersion":1,"epoch":"session-uuid","seq":1,"intentRevision":1,"state":"awaitingAuth","rootManager":"kernelsu","authStatus":"notGranted","mode":"rootTun","rootTunEnabled":true,"autostartEnabled":false,"lastErrorCode":"ROOT_GRANT_REQUIRED_IN_MANAGER","lastErrorAt":1792713600000,"warnings":[],"authDeadlineAt":null,"startedAt":null,"updatedAt":1792713600000,"stale":false}},"error":null}
-```
+App 与 root 的撤权交接使用新的有限本机通道：App 在 127.0.0.1 监听，root 发送随机 nonce，
+双方用私有随机 token 对 nonce/固定状态计算 SHA-256 签名；不在网络上传 token，不接受 shell/路径参数。
+App 连续拒绝后的 verdict 交给 watchdog；root 清理完成后回送签名确认，App 才发布 failed/revoked。
+端口/token 在 App 私有目录持久化并配置到 R；显式重试时轮换 token，拒绝旧会话的清理确认。
+App 重建可接收此前的清理结果；App 强停时靠管理器记录独立清理。
+撤权后的 watchdog 保留结果交接与卸载监护，显式 stop/disable 才结束。业务错误仍仅使用附录 B 的 27 个码。
 
-Ack 中 snapshot 为入列时的快照，可能仍是前一状态；不承诺 Ack 时已经授权/运行。同 requestId/有效参数重试返回原 Ack，改参数复用 ID 为 `INVALID_ARGUMENT`；保留最近 256 个请求。新生命周期 revision 取消旧启动/恢复意图。自启设置复用当前生命周期 revision，独立按最新 requestId 合并，避免改开关取消正在进行的启动；后来的 stop/start revision 会使旧设置任务失效。
+模拟覆盖：KSU grant/deny/未知 ABI、Magisk grant/deny/过期/超时/失败、APatch 精确记录/损坏格式、
+两次拒绝及 unknown 重置、清理后才报失败、清理失败重试保留原因、自启关闭与未知入口保留；
+JVM 覆盖 App 超时不算撤权、连续拒绝、签名校验、伪造确认拒绝、凭据重开和重试时清除旧确认。
 
-```json
-{"ok":false,"data":null,"error":{"code":"ROOT_NOT_FOUND","details":{"phase":"detectRoot"},"retryable":false}}
-```
+真机必验：W3 三家授权记录读取与更新延迟，App 前台撤权 ≤15s，强停后撤权，boot 撤权不写规则，
+authStatus/错误码与通知可见性，重新授权后恢复；Android 17 本机端口访问、App 重建/端口重连、
+通知权限与后台限制。**这些没有实机证据，本轮不能声称 #29 的 AC 已全部通过。**
 
-参数错误用 PlatformException `INVALID_ARGUMENT`；IO/通道错误用 `CORE_ERROR` + `{phase}`，不加入 PRD 用户错误枚举。前提检测返回 ok=true 的 degraded 快照，已知 degraded 前提下 start 返回业务失败。
+## 复审非阻塞建议
 
-八态及全部 27 个 PRD 错误常量见 RootTunProtocol.kt；rootManager 为 magisk/kernelsu/apatch/none/unknown，authStatus 为 unknown/notGranted/granted/denied/revoked。本轮 revoked 枚举预留，尚无可靠运行时撤权探测。
+- N2：Plugin 在进入 exportDiagnostics 前调用 requireRequestId，单独捕获参数异常；非 UUID 也返回
+  INVALID_ARGUMENT（phase=exportDiagnostics），打包/执行失败继续用 CORE_ERROR。
+- Controller recheck：抽出 Controller 自身使用的 recheckedAuth 决策，新增 disabled + notGranted 无启动意图的单测，
+  并覆盖待授权/取消意图。撤权后的明确 recheck 重新进入授权启动流程（Magisk 可重新弹窗），已确认/关闭的失败不自动启动。这是 Controller 决策测试，不是 Android Context/Service 端到端测试。
+- normalize：去计数、注释、expires/age/used，以及 RA/kernel 协议元数据；保留真实路由、下一跳、metric 和规则变化。
+  成功 running 或成功 cleanup 清除 restore-diff 告警标记；真实差异仍保留证据并提示 CLEANUP_FAILED。
+- 诊断采集补充 heartbeat/generation/boot-id/owned.boot/auth-status 以及轮换后的 supervisor/watchdog/boot 日志；
+  不导出授权通道 token、配置密钥或管理器完整授权列表。
 
-事件 listen 参数 `{schemaVersion:1,epoch:null或String,afterSeq:int}`。本轮使用完整 snapshot 事件（不发 delta）：
+## 文件与验证方式
 
-```json
-{"schemaVersion":1,"epoch":"session-uuid","seq":2,"kind":"snapshot","requestId":null,"code":"CORE_RECOVERED","at":1792713600000,"snapshot":{"schemaVersion":1,"epoch":"session-uuid","seq":2,"intentRevision":1,"state":"running","rootManager":"kernelsu","authStatus":"granted","mode":"rootTun","rootTunEnabled":true,"autostartEnabled":false,"lastErrorCode":null,"lastErrorAt":null,"warnings":[],"authDeadlineAt":null,"startedAt":1792713600000,"updatedAt":1792713600000,"stale":false}}
-```
+主要改动：assets/root-tun/{runtime,authorization,service.d,diagnostics}.sh；RootRuntime、RootTunController、
+RootAuthorization、RootReconciliation、RootTunPlugin；android/tests/app/root 的两个新测试类；
+root-tun/tests 的 POSIX sh 模拟；out/compile-native.py 增加新测试类。
+Flutter MethodChannel/EventChannel、八态、27 个业务错误码和 exportDiagnostics ZIP 返回契约保持不变。
 
-先 getState，再 listen(epoch/seq)。补发最近 256 事件；域不符/无连续历史时发送新完整快照。detach 只退订，后台 Root 不停止。没有持久化状态时 stale=false；进程重建有缓存时先 stale=true，后台探测授权并调用 runtime.status()，核对后发布 stale=false。未授权到 awaitingAuth，前提不满足到 degraded；核对只接入已有运行实例，不自动接管。recheckRoot 也可再次核对；旧 revision 不得覆盖新命令。
-
-KSU/APatch 不设授权倒计时；su 被隐藏时也参考已安装管理器包，给出去管理器授权的状态。Magisk 仅显式 start/requestAuth 执行可弹窗的 su，最多 30 秒。管理器隐藏/改包名及不同 fork 仍需真机验证。
-
-## 诊断与手机联调
-
-ZIP 包含设备/系统/包名（Android release、SDK、incremental、安全补丁、uname -a、PAGE_SIZE、ksud -V/固定路径版本、KernelSU properties、dmesg/logcat AVC 最后 200 行）、完整原生快照、App 状态记录、getenforce、双族 rule、全部路由表、link/addr、iptables-save/ip6tables-save、connectivity 的 VPN 行、core/validation/watchdog/状态迁移日志及启动前网络文本快照及 `logs/restore-diff.txt`。权限不足/命令不存在时保留失败和 stderr；无授权时不会为了导出主动弹 Magisk 授权框。凭据、订阅 URL 查询、代理 URI 做脱敏；不导出配置文件。disable 删除 runtime 前保留脱敏运行日志，并将完整 restore-diff.txt 复制到 App 创建的私有缓存文件，不受 su stdout 的 1MiB 上限截断；导出 ZIP 时统一脱敏。ZIP 缓存 24 小时后于下一次导出清理。无授权的诊断使用同一脚本以普通用户运行，权限/命令失败保留在证据中。exportDiagnostics 技术失败仅 CORE_ERROR + phase=exportDiagnostics；本轮未引入额外业务错误码。Flutter PR #23 仍需提供独立的 20 秒导出超时。
-
-Flutter 同事需把上述方法接到界面，本分支不新增 Flutter 开关。真机测试者仅点按即可：选生效配置 → 启用 Root → KSU/APatch 管理器授权 → 返回重新检测 → 等 running → 浏览器确认出站 → 导出诊断。失败时直接导出；再点清理残留。无需 adb。
-
-必须验证：小米 17 Pro Max（Android 17，KernelSU） SELinux 执行与 netlink、SO_MARK 全协议防回环、nc 命令和 su 后台保活、App/核心被杀后的恢复时限、UDP/TCP 53、自动/严格私人 DNS、IPv6 无业务泄露、Wi-Fi/移动切换、VPN 双向切换/Always-on lockdown、连续 20 次启停后规则差异。再补 Magisk/APatch 至少一种实测。
-
-## 构建与本机检查
-
-CI 需要递归拉取固定 core/Clash.Meta gitlink `8380d0e7462f061a964323e9bf3129a236fcc5d5`（SSH 凭据/HTTPS 重写由 DevOps 配置，本分支未改 .gitmodules），Go（本机 1.27.3）、项目指定 Flutter 3.47.x/Dart、JDK 17、Android SDK/NDK（Gradle 版本目录固定值），以及现有 Flutter/Rust 构建依赖。支持 Linux/macOS 的 sh 构建入口；不支持 Windows 本机的此脚本。
+在仓库根目录运行：
 
 ```sh
-flutter pub get
-flutter build apk --debug --target-platform android-arm64
-# 可选双 ABI：
-flutter build apk --debug --target-platform android-arm64,android-x64
-# 现有 setup.dart android 同样经 Flutter/Gradle 触发该任务。
+sh android/root-tun/tests/run.sh
+/tmp/shellcheck-v0.11.0/shellcheck -s sh android/app/src/main/assets/root-tun/*.sh android/root-tun/*.sh android/root-tun/tests/*.sh
+java -jar out/check-tools/ktlint.jar android/app/src/main/kotlin/com/follow/clash/root/*.kt android/app/src/main/kotlin/com/follow/clash/plugins/RootTunPlugin.kt android/tests/app/root/*.kt
+python3 out/compile-native.py
 ```
 
-本分支已去掉 armeabi-v7a；默认和双目标只产生两个 64 位 ABI。Flutter 默认请求列表里的 android-arm 被 gomobile 过滤，单独 android-arm 目标会被 Root 核心任务拒绝。APK 应包含 `lib/<ABI>/libroot_mihomo.so`，安装后必须验证 nativeLibraryDir 中存在并可由 su 复制执行。
+模拟只在 mktemp 目录复制并改写固定路径，使用假的 pm、ip、iptables、nc、magisk；
+真实 sh/core 替身进程按记录 PID 结束，不启动宿主 FlClash，不调用宿主网络修改命令。
+超时模拟偶尔出现 `Killed` 是 timeout 的预期取证，退出码与断言仍是最终结果。
 
-本轮返工验证（2026-10-23）：
+本机结果（2026-10-23）：shellcheck/sh -n（13 个脚本）、模拟套件（32 条 PASS）、ktlint、24 项 JVM JUnit、
+diff whitespace 和 comment-density 检查通过。
+JVM 编译使用 out/check-tools 缓存的 Android/Flutter 依赖与宿主/R/BuildConfig 桩，以 JVM 17 为目标；
+**不等于正式 Gradle/targetSdk 37 编译或 APK 验证**。日志位于 out/root-tun-p0-{shell-tests,native-tests,ktlint}.log。
 
-- 使用已有缓存中固定 gitlink `8380d0e7462f061a964323e9bf3129a236fcc5d5` 的源码/依赖及 NDK r27c，重新执行修改后的 build-core.sh，arm64-v8a/x86_64 均成功。产物在 `out/root-jni-rework/`（不提交二进制）。readelf 检查所有 LOAD 段：arm64 为 0x10000，x86_64 为 0x4000，均满足 16KB 对齐；这不是仓库 NDK 28 的 APK 验证。
-- Kotlin 2.2.20 在 JDK 21 上以 JVM 17 目标编译本轮 Root Kotlin、通道、ServiceState/MainActivity，并运行 `android/tests/app/root/` 的 17 项 JUnit，全部通过。使用真实 Android API 35/Flutter embedding/AndroidX/SnakeYAML JAR，但宿主/R/BuildConfig 使用已有 `out/check-stubs/` 临时桩；不等于仓库 AGP/Kotlin 版本下的模块编译。
-- ShellCheck 0.11.0 对 runtime、service.d、诊断和构建脚本零报错；sh -n 通过。私有临时目录的命令模拟覆盖基线一致、计数/注释变化、真实残留差异/警告、采集失败保留 owned 以便重试，以及自启同 boot 幂等/开关关闭不启动。没有在宿主修改路由或启动 FlClash。
-- 使用缓存 Gradle 9.1.0/AGP 9.0.0 隔离验证 app 的 ABI DSL：split 输出仅 arm64-v8a 和 x86_64；也检查单目标和非 split 配置。该隔离配置不能替代仓库 AGP 9.4.1 的正式 APK 构建。
-- 已实际尝试 `./gradlew :app:compileDebugKotlin :app:assembleDebug -Ptarget-platform=android-arm64,android-x64`：仓库未带 gradlew，未执行。SDK 37、NDK 28.2.13676358、local.properties 和 core/Clash.Meta 子模块缺失；没有产出 APK，也未运行 app lint/安装/真机测试。
-- 已尝试 `flutter pub get`、`flutter analyze --no-fatal-infos`、`flutter test test/core/protocol_contract_test.dart`：PATH 无 Flutter，使用已有 SDK 绝对路径后仍因其 cache 在只读文件系统、无法写 engine.stamp/engine.realm 而均未运行。本轮没有修改 Dart。
-- 9 秒命令预算的实际超时探针在本机 9646ms 返回，小于 10 秒；这验证本机 su 等价子进程/双流收尾预算，设备上的 root 管理器与慢命令仍需手测。
-- 结构自查范围：通道契约、状态核对、ServiceState 权限接缝、RootRuntime 文件操作及脚本边界；没有发现本轮引入且需额外重构的责任归属问题。ktlint 与 diff/comment-density 检查见工作区 `out/rework-*` 日志。
+已尝试但未能执行的仓库检查：
 
-## 与完整 TDD/PRD 的差距和冲突
+- flutter pub get、flutter analyze --no-fatal-infos、flutter test test/core/protocol_contract_test.dart：PATH 无 flutter。
+- android/./gradlew :app:compileDebugKotlin：仓库无 gradlew。
+- 本轮未运行 detekt、APK 打包、安装和真机验收；Go/cargo 不涉及改动，未触发其构建。
 
-- 本轮按明确范围做原生最小实现。完整 TDD 的 Go root-agent/受认证 socket、分块 stage、Core JSON 数据桥、可靠配置 reload、无 App 的事件补发/epoch 由 root 持久化尚未实现。当前 root 生命周期由独立 sh 监督，Kotlin 编排授权/镜像状态；Flutter 原有 gomobile 统计/连接页不会自动转到独立核心。
-- 网络保存为命名空间所有权标记 + 完整文本基线，不是 TDD 的结构化逐步 undo.jsonl；清理后重新采集双族 rule/所有表 route 和两种 iptables-save，去计数/注释后逐项 diff；差异写 logs/restore-diff.txt，并在 transitions.log 和快照 warnings 中记 CLEANUP_FAILED。差异本身不自动阻止已清理自有资源的停止；证据采集/比较工具失败则保留 owned 并继续清理重试。外部并发修改、网络切换情况下“全局与旧快照一致”需按 TDD Q1 继续解决。不得声称已证明全部规则还原。
-- root 监督进程可独立于 App 恢复核心，但没有第二层独立 watchdog 监视监督进程本身；不覆盖 App/监督进程/核心同时被杀。恢复时会先清除并重装自有规则，存在短暂直连窗口；完整 TDD 要求恢复成功前保持接管，后续改为保留接管规则、只重启核心，并收敛到 agent/journal 方案；本轮仅登记，不改恢复策略。
-- 10 秒启动/3 秒清理/30 秒恢复为本轮预算和轮询上限，su、资产复制、慢内核/多次规则命令的硬时限仍需设备压测，不能只凭代码宣称 P95 达标。
-- 按本轮范围，**未完成的 P0：卸载检测、独立看门狗、授权撤销检测**，拆到后续 PR；本轮不实现评审第 9 项。service.d 入口与自启开关已实现，冷启动通知/撤权时 boot 的有效授权检查仍需后续闭环。Magisk 无通用无弹窗授权查询，本轮被动检测只保留已有授权信息，不能据此证明未撤权。
-- IPv6 当前使用 OUTPUT filter；未实现 TDD 的额外 policy unreachable。代理出站 mark 的全覆盖、防漏和候选路由与 netd 冲突仍属 W1 真机门槛。私人 DNS 切换规则是逐条更新，尚不是完整原子网络事务。
-- 磁贴操作已路由到 Root，但磁贴外观仍读上游 VPN RunState，Root 展示同步留后续；其他 VPN 并存不保证策略，按 R2 实测记录。
-- PRD §5.1 的 failed 默认意味着直连，但又允许清理失败为 failed；按 TDD Q2，本轮清理未完成保持 stopping+CLEANUP_FAILED。PRD 关闭功能要求删除全部 R，与保留独立卸载监护的完整设计存在 Q2；本轮无卸载监护，disable 确认清理后删除 R。
-- 控制通道使用 **TCP + token**，偏离 TDD §6.3 的受 SO_PEERCRED 认证的 Unix socket；不宣称已实现对端 UID 校验。exportDiagnostics 按评审统一为私有 path/sizeBytes/mimeType；删除 cleanup 别名，只保留 cleanupResidue。
+## 仍保留的方案 B 偏差
 
-## 评审逐项自查
-
-| 清单编号 | 本轮结果与自查 |
-| --- | --- |
-| 1 | 完成：UUID 参数、私有 cache ZIP 三字段返回；移除 Activity/chooser/FileProvider/路径 XML；ZIP 实测和返回结构单测通过。 |
-| 2 | 完成：单次 su 执行诊断 sh、分段标记、9 秒进程等待 + 最多 600ms 流收尾；有界超时探针通过。 |
-| 3 | 完成：Android 17 所需系统/内核/KernelSU/AVC 字段、恢复 diff 打包；现场可用性待真机。 |
-| 4 / B1 | 完成：新安装不 stale；持久化快照异步核对并发 stale=false；授权不足可等待/降级；新旧意图守卫和相关单测通过。 |
-| 5 | 完成：复用 AppPlugin 通知权限，在 runtime.start 前请求 FGS；ForegroundServiceStartNotAllowedException 单独记录，不回滚 Root。后台/磁贴真机待测。 |
-| 6 | 完成：proxyStop/cancelAuth/acknowledgeFailure 保留自启；仅 disable/switchToVpn（cleanupResidue 走 disable）关闭自启并删入口。 |
-| 7 | 完成：safe-mode 返回 CORE_START_FAILED、retryable=false、reason=SAFE_MODE，不抛 CORE_ERROR；单测覆盖返回结构。 |
-| 8 | 完成：删除 cleanup 平台通道别名。 |
-| 9 | 按要求未做：独立看门狗、卸载与授权撤销检测留后续 PR。 |
-| 10 | 完成限定范围：Kotlin setAutostart；固定、自有标记入口原子替换/精确删除；config 开关持久化；成功启动和状态核对读取真实入口文件状态；POSIX/幂等检查通过。 |
-| 11 / B3 | 完成：双族/所有表/两种 save 归一化 diff、差异警告与快照 warnings、App cache 保留原文件并导出；模拟差异和失败重试通过。 |
-| 12 | 完成文档登记：崩溃恢复有直连窗口，后续保留规则只重启核心；未改恢复逻辑。 |
-| 13 | 完成：两 ABI 共用 -extldflags=-Wl,-z,max-page-size=16384，重编和 LOAD 对齐检查通过。 |
-| 14 / B4 | 完成构建配置：Root 核心/gomobile/ABI 与 splits 均仅 64 位；双核心成功、隔离 split DSL 通过；两个完整 APK 尚未构建，CI 修改由 DevOps 负责。 |
-| 15 | 完成：移除 manifest extractNativeLibs，仅保留 Gradle useLegacyPackaging。 |
-| 16 | 完成：真机型号/Android 17、TCP+token 偏差、三项未完成 P0 已登记。 |
+mihomo 控制面仍为 127.0.0.1 TCP + token，不是 TDD 的 Unix socket/SO_PEERCRED；新增撤权交接也不代表已实现该 UID 认证协议。
+网络恢复沿用命名空间所有权 + 完整文本基线，不是结构化 undo.jsonl；跨切网的真实全局差异按 TDD Q1 保留证据。
+Root 侧 status/心跳不等于完整 root-agent Snapshot/事件持久化；可靠配置 reload、Core 数据桥仍属原有后续范围。
+本轮没有改动这些已登记的边界，也不以模拟替代 W1/W3/W4/W5 和至少两种 root 方案实测的发布门槛。
 
 ## 提交与交付
 
-- 返工提交：`77f62e6`（feature/root-tun-native），已推送，并合入 feature/root-tun-integration（`9246550`）。
-- 复审修正（N1 未授权且无启动意图时保持 disabled、N2 exportDiagnostics 校验 requestId、N3 本节）：紧随 `77f62e6` 的下一个提交，以 feature/root-tun-native 分支 HEAD 为准。
-- 本机验证：Kotlin 编译、18 项 JVM 单测（宿主类使用临时桩）、shellcheck、ktlint 通过；完整 APK 由 CI 构建，未在本机产出。
-- 未做：独立看门狗、卸载检测、授权撤销检测（B2 P0），留后续 PR；真机手测待进行。
+已尝试按 issue 创建 Conventional Commit，但 `git add` 无法创建
+`/workspace/FlClash/.git/worktrees/android/index.lock`：`Read-only file system`。
+因此没有新提交，HEAD 仍为 8f38fc6；没有绕过 hook，没有 push。
+
+改动保留在工作区，完整 patch（含新增脚本/测试和 out/compile-native.py）为 `out/root-tun-p0.patch`。
+补丁已在临时的 8f38fc6 基线通过 git apply 检查，应用后的 22 个文件与工作区逐字节一致。
+预期提交分组记录在 `out/root-tun-p0-commits.txt`：
+
+1. feat(android): add independent root tun watchdog (#25)
+2. feat(android): clean root tun after confirmed uninstall (#26)
+3. feat(android): harden service.d autostart and upgrades (#28)
+4. feat(android): clean root tun on permission revocation (#29)
+5. fix(android): address root tun review suggestions
+
+结构自查覆盖：runtime 的 owner/control 锁与代际接管、只读慢探测任务、网络清理唯一职责、boot 入口/设置事务、
+App 授权探测与签名结果交接、Controller recheck 与通道参数边界；未发现本轮需要另行重构的责任归属问题。
+正式交付仍需技术负责人 Review、CI 和上述真机取证；未提交或请求合并 PR。

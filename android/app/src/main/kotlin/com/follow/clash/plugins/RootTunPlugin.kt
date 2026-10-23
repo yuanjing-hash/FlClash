@@ -2,6 +2,7 @@ package com.follow.clash.plugins
 
 import com.follow.clash.ServiceState
 import com.follow.clash.common.Components
+import com.follow.clash.root.requireRequestId
 import com.follow.clash.root.success
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.plugin.common.EventChannel
@@ -60,15 +61,13 @@ class RootTunPlugin :
                             success(backend.getLogs(args["cursor"] as? String, limit))
                         }
                         "exportDiagnostics" -> {
-                            val requestId = args["requestId"]
-                            if (requestId !is String || requestId.isBlank()) {
-                                result.error(
-                                    "INVALID_ARGUMENT",
-                                    "requestId must be a non-empty string",
-                                    mapOf("phase" to "exportDiagnostics"),
-                                )
-                                return@launch
-                            }
+                            val requestId =
+                                try {
+                                    requireRequestId(args["requestId"])
+                                } catch (error: IllegalArgumentException) {
+                                    result.error("INVALID_ARGUMENT", error.message, mapOf("phase" to "exportDiagnostics"))
+                                    return@launch
+                                }
                             success(backend.exportDiagnostics(requestId))
                         }
                         else -> {
