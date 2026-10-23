@@ -306,14 +306,10 @@ internal class RootTunController(
             if (snapshot.state != TunState.RUNNING || snapshot.stale) start(revision, requestId)
         } else {
             val state =
-                if (root.auth !=
-                    "granted"
-                ) {
-                    TunState.AWAITING_AUTH
-                } else if (snapshot.state == TunState.DEGRADED) {
-                    TunState.DISABLED
-                } else {
-                    snapshot.state
+                when {
+                    root.auth != "granted" && desiredRunning -> TunState.AWAITING_AUTH
+                    snapshot.state == TunState.DEGRADED || snapshot.state == TunState.AWAITING_AUTH -> TunState.DISABLED
+                    else -> snapshot.state
                 }
             report(
                 revision,

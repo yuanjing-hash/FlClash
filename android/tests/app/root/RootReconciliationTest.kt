@@ -49,6 +49,21 @@ class RootReconciliationTest {
     }
 
     @Test
+    fun missingGrantWithoutStartIntentStaysDisabledAndOnlyUpdatesAuth() {
+        val idle = RootSnapshot(state = TunState.DISABLED, rootTunEnabled = false)
+        val checked =
+            RootReconciliation.checked(
+                idle,
+                RootStatus("kernelsu", "notGranted"),
+                ShellResult(0, "disabled -\nautostart:no\n", ""),
+            )
+        assertEquals(TunState.DISABLED, checked.state)
+        assertEquals("notGranted", checked.authStatus)
+        assertNull(checked.lastErrorCode)
+        assertFalse(checked.stale)
+    }
+
+    @Test
     fun missingRootDegradesAndUnverifiableRuntimeRequiresCleanup() {
         val degraded = RootReconciliation.checked(cached, RootStatus("none", "unknown", RootCode.ROOT_NOT_FOUND), null)
         assertEquals(TunState.DEGRADED, degraded.state)
