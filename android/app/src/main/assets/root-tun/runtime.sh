@@ -598,7 +598,7 @@ autostart_requested() {
 }
 
 user_unlocked() {
-    user_state=$(timeout -s KILL 1 am get-started-user-state 0 2>/dev/null) || user_state=''
+    user_state=$(timeout -s KILL 3 am get-started-user-state 0 2>/dev/null) || user_state=''
     [ "$user_state" = RUNNING_UNLOCKED ] ||
         [ "$(getprop sys.user.0.ce_available 2>/dev/null)" = true ]
 }

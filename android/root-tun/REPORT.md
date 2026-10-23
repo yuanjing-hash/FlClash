@@ -121,7 +121,7 @@ authStatus/错误码与通知可见性，重新授权后恢复；Android 17 本�
 - 诊断采集补充 heartbeat/generation/boot-id/owned.boot/auth-status 以及轮换后的 supervisor/watchdog/boot 日志；
   不导出授权通道 token、配置密钥或管理器完整授权列表。
 
-## PR #31 返工对照（e37003d 之后，未提交）
+## PR #31 返工对照（已提交：2fe74a5、6fb6246、e9f1cce，合并于 b9fbd4a）
 
 已完整阅读 `out/p0-inputs/review-31.md`，包含 9 条行内评论与 12 项真机清单。
 
