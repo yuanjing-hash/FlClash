@@ -8057,10 +8057,10 @@ class AppLocalizations {
     );
   }
 
-  /// `State is unverified. Check again before changing settings.`
+  /// `Verifying state. You can check again or stop Root TUN.`
   String get rootTunStale {
     return Intl.message(
-      'State is unverified. Check again before changing settings.',
+      'Verifying state. You can check again or stop Root TUN.',
       name: 'rootTunStale',
       desc: '',
       args: [],

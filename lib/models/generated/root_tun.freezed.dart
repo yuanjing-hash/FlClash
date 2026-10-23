@@ -1486,7 +1486,7 @@ as bool,
 /// @nodoc
 mixin _$RootTunDiagnostics {
 
-@JsonKey(required: true) String get path;@JsonKey(required: true, fromJson: _rootTunInt) int get sizeBytes;
+@JsonKey(required: true) String get path;@JsonKey(required: true, fromJson: _rootTunInt) int get sizeBytes; String get mimeType;
 /// Create a copy of RootTunDiagnostics
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -1500,20 +1500,20 @@ $RootTunDiagnosticsCopyWith<RootTunDiagnostics> get copyWith => _$RootTunDiagnos
 @override
 bool operator ==(Object other) {
   final _this = this as RootTunDiagnostics;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is RootTunDiagnostics&&(identical(other.path, _this.path) || other.path == _this.path)&&(identical(other.sizeBytes, _this.sizeBytes) || other.sizeBytes == _this.sizeBytes));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is RootTunDiagnostics&&(identical(other.path, _this.path) || other.path == _this.path)&&(identical(other.sizeBytes, _this.sizeBytes) || other.sizeBytes == _this.sizeBytes)&&(identical(other.mimeType, _this.mimeType) || other.mimeType == _this.mimeType));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
   final _this = this as RootTunDiagnostics;
-  return Object.hash(runtimeType,_this.path,_this.sizeBytes);
+  return Object.hash(runtimeType,_this.path,_this.sizeBytes,_this.mimeType);
 }
 
 @override
 String toString() {
   final _this = this as RootTunDiagnostics;
-  return 'RootTunDiagnostics(path: ${_this.path}, sizeBytes: ${_this.sizeBytes})';
+  return 'RootTunDiagnostics(path: ${_this.path}, sizeBytes: ${_this.sizeBytes}, mimeType: ${_this.mimeType})';
 }
 
 
@@ -1524,7 +1524,7 @@ abstract mixin class $RootTunDiagnosticsCopyWith<$Res>  {
   factory $RootTunDiagnosticsCopyWith(RootTunDiagnostics value, $Res Function(RootTunDiagnostics) _then) = _$RootTunDiagnosticsCopyWithImpl;
 @useResult
 $Res call({
-@JsonKey(required: true) String path,@JsonKey(required: true, fromJson: _rootTunInt) int sizeBytes
+@JsonKey(required: true) String path,@JsonKey(required: true, fromJson: _rootTunInt) int sizeBytes, String mimeType
 });
 
 
@@ -1541,11 +1541,12 @@ class _$RootTunDiagnosticsCopyWithImpl<$Res>
 
 /// Create a copy of RootTunDiagnostics
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? path = null,Object? sizeBytes = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? path = null,Object? sizeBytes = null,Object? mimeType = null,}) {
   return _then(RootTunDiagnostics(
 path: null == path ? _self.path : path // ignore: cast_nullable_to_non_nullable
 as String,sizeBytes: null == sizeBytes ? _self.sizeBytes : sizeBytes // ignore: cast_nullable_to_non_nullable
-as int,
+as int,mimeType: null == mimeType ? _self.mimeType : mimeType // ignore: cast_nullable_to_non_nullable
+as String,
   ));
 }
 
@@ -1630,10 +1631,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(required: true)  String path, @JsonKey(required: true, fromJson: _rootTunInt)  int sizeBytes)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function(@JsonKey(required: true)  String path, @JsonKey(required: true, fromJson: _rootTunInt)  int sizeBytes,  String mimeType)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _RootTunDiagnostics() when $default != null:
-return $default(_that.path,_that.sizeBytes);case _:
+return $default(_that.path,_that.sizeBytes,_that.mimeType);case _:
   return orElse();
 
 }
@@ -1651,10 +1652,10 @@ return $default(_that.path,_that.sizeBytes);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(required: true)  String path, @JsonKey(required: true, fromJson: _rootTunInt)  int sizeBytes)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function(@JsonKey(required: true)  String path, @JsonKey(required: true, fromJson: _rootTunInt)  int sizeBytes,  String mimeType)  $default,) {final _that = this;
 switch (_that) {
 case _RootTunDiagnostics():
-return $default(_that.path,_that.sizeBytes);case _:
+return $default(_that.path,_that.sizeBytes,_that.mimeType);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -1671,10 +1672,10 @@ return $default(_that.path,_that.sizeBytes);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(required: true)  String path, @JsonKey(required: true, fromJson: _rootTunInt)  int sizeBytes)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function(@JsonKey(required: true)  String path, @JsonKey(required: true, fromJson: _rootTunInt)  int sizeBytes,  String mimeType)?  $default,) {final _that = this;
 switch (_that) {
 case _RootTunDiagnostics() when $default != null:
-return $default(_that.path,_that.sizeBytes);case _:
+return $default(_that.path,_that.sizeBytes,_that.mimeType);case _:
   return null;
 
 }
@@ -1686,11 +1687,12 @@ return $default(_that.path,_that.sizeBytes);case _:
 
 @JsonSerializable(checked: true, explicitToJson: true)
 class _RootTunDiagnostics implements RootTunDiagnostics {
-  const _RootTunDiagnostics({@JsonKey(required: true) required this.path, @JsonKey(required: true, fromJson: _rootTunInt) required this.sizeBytes});
+  const _RootTunDiagnostics({@JsonKey(required: true) required this.path, @JsonKey(required: true, fromJson: _rootTunInt) required this.sizeBytes, this.mimeType = 'application/zip'});
   factory _RootTunDiagnostics.fromJson(Map<String, dynamic> json) => _$RootTunDiagnosticsFromJson(json);
 
 @override@JsonKey(required: true) final  String path;
 @override@JsonKey(required: true, fromJson: _rootTunInt) final  int sizeBytes;
+@override@JsonKey() final  String mimeType;
 
 /// Create a copy of RootTunDiagnostics
 /// with the given fields replaced by the non-null parameter values.
@@ -1705,18 +1707,18 @@ Map<String, dynamic> toJson() {
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _RootTunDiagnostics&&(identical(other.path, path) || other.path == path)&&(identical(other.sizeBytes, sizeBytes) || other.sizeBytes == sizeBytes));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _RootTunDiagnostics&&(identical(other.path, path) || other.path == path)&&(identical(other.sizeBytes, sizeBytes) || other.sizeBytes == sizeBytes)&&(identical(other.mimeType, mimeType) || other.mimeType == mimeType));
 }
 
 @JsonKey(includeFromJson: false, includeToJson: false)
 @override
 int get hashCode {
-    return Object.hash(runtimeType,path,sizeBytes);
+    return Object.hash(runtimeType,path,sizeBytes,mimeType);
 }
 
 @override
 String toString() {
-    return 'RootTunDiagnostics(path: $path, sizeBytes: $sizeBytes)';
+    return 'RootTunDiagnostics(path: $path, sizeBytes: $sizeBytes, mimeType: $mimeType)';
 }
 
 
@@ -1727,7 +1729,7 @@ abstract mixin class _$RootTunDiagnosticsCopyWith<$Res> implements $RootTunDiagn
   factory _$RootTunDiagnosticsCopyWith(_RootTunDiagnostics value, $Res Function(_RootTunDiagnostics) _then) = __$RootTunDiagnosticsCopyWithImpl;
 @override @useResult
 $Res call({
-@JsonKey(required: true) String path,@JsonKey(required: true, fromJson: _rootTunInt) int sizeBytes
+@JsonKey(required: true) String path,@JsonKey(required: true, fromJson: _rootTunInt) int sizeBytes, String mimeType
 });
 
 
@@ -1744,11 +1746,12 @@ class __$RootTunDiagnosticsCopyWithImpl<$Res>
 
 /// Create a copy of RootTunDiagnostics
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? path = null,Object? sizeBytes = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? path = null,Object? sizeBytes = null,Object? mimeType = null,}) {
   return _then(_RootTunDiagnostics(
 path: null == path ? _self.path : path // ignore: cast_nullable_to_non_nullable
 as String,sizeBytes: null == sizeBytes ? _self.sizeBytes : sizeBytes // ignore: cast_nullable_to_non_nullable
-as int,
+as int,mimeType: null == mimeType ? _self.mimeType : mimeType // ignore: cast_nullable_to_non_nullable
+as String,
   ));
 }
 
@@ -1758,7 +1761,7 @@ as int,
 /// @nodoc
 mixin _$RootTunViewState {
 
- RootTunSnapshot? get snapshot; bool? get channelAvailable; String? get lastChannelError; RootTunError? get commandError; RootTunEvent? get event; int get pendingCommands; bool get cleanupSupported;
+ RootTunSnapshot? get snapshot; bool? get channelAvailable; String? get lastChannelError; RootTunError? get commandError; RootTunEvent? get event; int get pendingCommands; bool get cleanupSupported; bool get autostartSupported;
 /// Create a copy of RootTunViewState
 /// with the given fields replaced by the non-null parameter values.
 @JsonKey(includeFromJson: false, includeToJson: false)
@@ -1770,20 +1773,20 @@ $RootTunViewStateCopyWith<RootTunViewState> get copyWith => _$RootTunViewStateCo
 @override
 bool operator ==(Object other) {
   final _this = this as RootTunViewState;
-  return identical(this, other) || (other.runtimeType == runtimeType&&other is RootTunViewState&&(identical(other.snapshot, _this.snapshot) || other.snapshot == _this.snapshot)&&(identical(other.channelAvailable, _this.channelAvailable) || other.channelAvailable == _this.channelAvailable)&&(identical(other.lastChannelError, _this.lastChannelError) || other.lastChannelError == _this.lastChannelError)&&(identical(other.commandError, _this.commandError) || other.commandError == _this.commandError)&&(identical(other.event, _this.event) || other.event == _this.event)&&(identical(other.pendingCommands, _this.pendingCommands) || other.pendingCommands == _this.pendingCommands)&&(identical(other.cleanupSupported, _this.cleanupSupported) || other.cleanupSupported == _this.cleanupSupported));
+  return identical(this, other) || (other.runtimeType == runtimeType&&other is RootTunViewState&&(identical(other.snapshot, _this.snapshot) || other.snapshot == _this.snapshot)&&(identical(other.channelAvailable, _this.channelAvailable) || other.channelAvailable == _this.channelAvailable)&&(identical(other.lastChannelError, _this.lastChannelError) || other.lastChannelError == _this.lastChannelError)&&(identical(other.commandError, _this.commandError) || other.commandError == _this.commandError)&&(identical(other.event, _this.event) || other.event == _this.event)&&(identical(other.pendingCommands, _this.pendingCommands) || other.pendingCommands == _this.pendingCommands)&&(identical(other.cleanupSupported, _this.cleanupSupported) || other.cleanupSupported == _this.cleanupSupported)&&(identical(other.autostartSupported, _this.autostartSupported) || other.autostartSupported == _this.autostartSupported));
 }
 
 
 @override
 int get hashCode {
   final _this = this as RootTunViewState;
-  return Object.hash(runtimeType,_this.snapshot,_this.channelAvailable,_this.lastChannelError,_this.commandError,_this.event,_this.pendingCommands,_this.cleanupSupported);
+  return Object.hash(runtimeType,_this.snapshot,_this.channelAvailable,_this.lastChannelError,_this.commandError,_this.event,_this.pendingCommands,_this.cleanupSupported,_this.autostartSupported);
 }
 
 @override
 String toString() {
   final _this = this as RootTunViewState;
-  return 'RootTunViewState(snapshot: ${_this.snapshot}, channelAvailable: ${_this.channelAvailable}, lastChannelError: ${_this.lastChannelError}, commandError: ${_this.commandError}, event: ${_this.event}, pendingCommands: ${_this.pendingCommands}, cleanupSupported: ${_this.cleanupSupported})';
+  return 'RootTunViewState(snapshot: ${_this.snapshot}, channelAvailable: ${_this.channelAvailable}, lastChannelError: ${_this.lastChannelError}, commandError: ${_this.commandError}, event: ${_this.event}, pendingCommands: ${_this.pendingCommands}, cleanupSupported: ${_this.cleanupSupported}, autostartSupported: ${_this.autostartSupported})';
 }
 
 
@@ -1794,7 +1797,7 @@ abstract mixin class $RootTunViewStateCopyWith<$Res>  {
   factory $RootTunViewStateCopyWith(RootTunViewState value, $Res Function(RootTunViewState) _then) = _$RootTunViewStateCopyWithImpl;
 @useResult
 $Res call({
- RootTunSnapshot? snapshot, bool? channelAvailable, String? lastChannelError, RootTunError? commandError, RootTunEvent? event, int pendingCommands, bool cleanupSupported
+ RootTunSnapshot? snapshot, bool? channelAvailable, String? lastChannelError, RootTunError? commandError, RootTunEvent? event, int pendingCommands, bool cleanupSupported, bool autostartSupported
 });
 
 
@@ -1811,7 +1814,7 @@ class _$RootTunViewStateCopyWithImpl<$Res>
 
 /// Create a copy of RootTunViewState
 /// with the given fields replaced by the non-null parameter values.
-@pragma('vm:prefer-inline') @override $Res call({Object? snapshot = freezed,Object? channelAvailable = freezed,Object? lastChannelError = freezed,Object? commandError = freezed,Object? event = freezed,Object? pendingCommands = null,Object? cleanupSupported = null,}) {
+@pragma('vm:prefer-inline') @override $Res call({Object? snapshot = freezed,Object? channelAvailable = freezed,Object? lastChannelError = freezed,Object? commandError = freezed,Object? event = freezed,Object? pendingCommands = null,Object? cleanupSupported = null,Object? autostartSupported = null,}) {
   return _then(RootTunViewState(
 snapshot: freezed == snapshot ? _self.snapshot : snapshot // ignore: cast_nullable_to_non_nullable
 as RootTunSnapshot?,channelAvailable: freezed == channelAvailable ? _self.channelAvailable : channelAvailable // ignore: cast_nullable_to_non_nullable
@@ -1820,6 +1823,7 @@ as String?,commandError: freezed == commandError ? _self.commandError : commandE
 as RootTunError?,event: freezed == event ? _self.event : event // ignore: cast_nullable_to_non_nullable
 as RootTunEvent?,pendingCommands: null == pendingCommands ? _self.pendingCommands : pendingCommands // ignore: cast_nullable_to_non_nullable
 as int,cleanupSupported: null == cleanupSupported ? _self.cleanupSupported : cleanupSupported // ignore: cast_nullable_to_non_nullable
+as bool,autostartSupported: null == autostartSupported ? _self.autostartSupported : autostartSupported // ignore: cast_nullable_to_non_nullable
 as bool,
   ));
 }
@@ -1929,10 +1933,10 @@ return $default(_that);case _:
 /// }
 /// ```
 
-@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( RootTunSnapshot? snapshot,  bool? channelAvailable,  String? lastChannelError,  RootTunError? commandError,  RootTunEvent? event,  int pendingCommands,  bool cleanupSupported)?  $default,{required TResult orElse(),}) {final _that = this;
+@optionalTypeArgs TResult maybeWhen<TResult extends Object?>(TResult Function( RootTunSnapshot? snapshot,  bool? channelAvailable,  String? lastChannelError,  RootTunError? commandError,  RootTunEvent? event,  int pendingCommands,  bool cleanupSupported,  bool autostartSupported)?  $default,{required TResult orElse(),}) {final _that = this;
 switch (_that) {
 case _RootTunViewState() when $default != null:
-return $default(_that.snapshot,_that.channelAvailable,_that.lastChannelError,_that.commandError,_that.event,_that.pendingCommands,_that.cleanupSupported);case _:
+return $default(_that.snapshot,_that.channelAvailable,_that.lastChannelError,_that.commandError,_that.event,_that.pendingCommands,_that.cleanupSupported,_that.autostartSupported);case _:
   return orElse();
 
 }
@@ -1950,10 +1954,10 @@ return $default(_that.snapshot,_that.channelAvailable,_that.lastChannelError,_th
 /// }
 /// ```
 
-@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( RootTunSnapshot? snapshot,  bool? channelAvailable,  String? lastChannelError,  RootTunError? commandError,  RootTunEvent? event,  int pendingCommands,  bool cleanupSupported)  $default,) {final _that = this;
+@optionalTypeArgs TResult when<TResult extends Object?>(TResult Function( RootTunSnapshot? snapshot,  bool? channelAvailable,  String? lastChannelError,  RootTunError? commandError,  RootTunEvent? event,  int pendingCommands,  bool cleanupSupported,  bool autostartSupported)  $default,) {final _that = this;
 switch (_that) {
 case _RootTunViewState():
-return $default(_that.snapshot,_that.channelAvailable,_that.lastChannelError,_that.commandError,_that.event,_that.pendingCommands,_that.cleanupSupported);case _:
+return $default(_that.snapshot,_that.channelAvailable,_that.lastChannelError,_that.commandError,_that.event,_that.pendingCommands,_that.cleanupSupported,_that.autostartSupported);case _:
   throw StateError('Unexpected subclass');
 
 }
@@ -1970,10 +1974,10 @@ return $default(_that.snapshot,_that.channelAvailable,_that.lastChannelError,_th
 /// }
 /// ```
 
-@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( RootTunSnapshot? snapshot,  bool? channelAvailable,  String? lastChannelError,  RootTunError? commandError,  RootTunEvent? event,  int pendingCommands,  bool cleanupSupported)?  $default,) {final _that = this;
+@optionalTypeArgs TResult? whenOrNull<TResult extends Object?>(TResult? Function( RootTunSnapshot? snapshot,  bool? channelAvailable,  String? lastChannelError,  RootTunError? commandError,  RootTunEvent? event,  int pendingCommands,  bool cleanupSupported,  bool autostartSupported)?  $default,) {final _that = this;
 switch (_that) {
 case _RootTunViewState() when $default != null:
-return $default(_that.snapshot,_that.channelAvailable,_that.lastChannelError,_that.commandError,_that.event,_that.pendingCommands,_that.cleanupSupported);case _:
+return $default(_that.snapshot,_that.channelAvailable,_that.lastChannelError,_that.commandError,_that.event,_that.pendingCommands,_that.cleanupSupported,_that.autostartSupported);case _:
   return null;
 
 }
@@ -1985,7 +1989,7 @@ return $default(_that.snapshot,_that.channelAvailable,_that.lastChannelError,_th
 
 
 class _RootTunViewState implements RootTunViewState {
-  const _RootTunViewState({this.snapshot, this.channelAvailable, this.lastChannelError, this.commandError, this.event, this.pendingCommands = 0, this.cleanupSupported = true});
+  const _RootTunViewState({this.snapshot, this.channelAvailable, this.lastChannelError, this.commandError, this.event, this.pendingCommands = 0, this.cleanupSupported = true, this.autostartSupported = true});
   
 
 @override final  RootTunSnapshot? snapshot;
@@ -1995,6 +1999,7 @@ class _RootTunViewState implements RootTunViewState {
 @override final  RootTunEvent? event;
 @override@JsonKey() final  int pendingCommands;
 @override@JsonKey() final  bool cleanupSupported;
+@override@JsonKey() final  bool autostartSupported;
 
 /// Create a copy of RootTunViewState
 /// with the given fields replaced by the non-null parameter values.
@@ -2006,18 +2011,18 @@ _$RootTunViewStateCopyWith<_RootTunViewState> get copyWith => __$RootTunViewStat
 
 @override
 bool operator ==(Object other) {
-    return identical(this, other) || (other.runtimeType == runtimeType&&other is _RootTunViewState&&(identical(other.snapshot, snapshot) || other.snapshot == snapshot)&&(identical(other.channelAvailable, channelAvailable) || other.channelAvailable == channelAvailable)&&(identical(other.lastChannelError, lastChannelError) || other.lastChannelError == lastChannelError)&&(identical(other.commandError, commandError) || other.commandError == commandError)&&(identical(other.event, event) || other.event == event)&&(identical(other.pendingCommands, pendingCommands) || other.pendingCommands == pendingCommands)&&(identical(other.cleanupSupported, cleanupSupported) || other.cleanupSupported == cleanupSupported));
+    return identical(this, other) || (other.runtimeType == runtimeType&&other is _RootTunViewState&&(identical(other.snapshot, snapshot) || other.snapshot == snapshot)&&(identical(other.channelAvailable, channelAvailable) || other.channelAvailable == channelAvailable)&&(identical(other.lastChannelError, lastChannelError) || other.lastChannelError == lastChannelError)&&(identical(other.commandError, commandError) || other.commandError == commandError)&&(identical(other.event, event) || other.event == event)&&(identical(other.pendingCommands, pendingCommands) || other.pendingCommands == pendingCommands)&&(identical(other.cleanupSupported, cleanupSupported) || other.cleanupSupported == cleanupSupported)&&(identical(other.autostartSupported, autostartSupported) || other.autostartSupported == autostartSupported));
 }
 
 
 @override
 int get hashCode {
-    return Object.hash(runtimeType,snapshot,channelAvailable,lastChannelError,commandError,event,pendingCommands,cleanupSupported);
+    return Object.hash(runtimeType,snapshot,channelAvailable,lastChannelError,commandError,event,pendingCommands,cleanupSupported,autostartSupported);
 }
 
 @override
 String toString() {
-    return 'RootTunViewState(snapshot: $snapshot, channelAvailable: $channelAvailable, lastChannelError: $lastChannelError, commandError: $commandError, event: $event, pendingCommands: $pendingCommands, cleanupSupported: $cleanupSupported)';
+    return 'RootTunViewState(snapshot: $snapshot, channelAvailable: $channelAvailable, lastChannelError: $lastChannelError, commandError: $commandError, event: $event, pendingCommands: $pendingCommands, cleanupSupported: $cleanupSupported, autostartSupported: $autostartSupported)';
 }
 
 
@@ -2028,7 +2033,7 @@ abstract mixin class _$RootTunViewStateCopyWith<$Res> implements $RootTunViewSta
   factory _$RootTunViewStateCopyWith(_RootTunViewState value, $Res Function(_RootTunViewState) _then) = __$RootTunViewStateCopyWithImpl;
 @override @useResult
 $Res call({
- RootTunSnapshot? snapshot, bool? channelAvailable, String? lastChannelError, RootTunError? commandError, RootTunEvent? event, int pendingCommands, bool cleanupSupported
+ RootTunSnapshot? snapshot, bool? channelAvailable, String? lastChannelError, RootTunError? commandError, RootTunEvent? event, int pendingCommands, bool cleanupSupported, bool autostartSupported
 });
 
 
@@ -2045,7 +2050,7 @@ class __$RootTunViewStateCopyWithImpl<$Res>
 
 /// Create a copy of RootTunViewState
 /// with the given fields replaced by the non-null parameter values.
-@override @pragma('vm:prefer-inline') $Res call({Object? snapshot = freezed,Object? channelAvailable = freezed,Object? lastChannelError = freezed,Object? commandError = freezed,Object? event = freezed,Object? pendingCommands = null,Object? cleanupSupported = null,}) {
+@override @pragma('vm:prefer-inline') $Res call({Object? snapshot = freezed,Object? channelAvailable = freezed,Object? lastChannelError = freezed,Object? commandError = freezed,Object? event = freezed,Object? pendingCommands = null,Object? cleanupSupported = null,Object? autostartSupported = null,}) {
   return _then(_RootTunViewState(
 snapshot: freezed == snapshot ? _self.snapshot : snapshot // ignore: cast_nullable_to_non_nullable
 as RootTunSnapshot?,channelAvailable: freezed == channelAvailable ? _self.channelAvailable : channelAvailable // ignore: cast_nullable_to_non_nullable
@@ -2054,6 +2059,7 @@ as String?,commandError: freezed == commandError ? _self.commandError : commandE
 as RootTunError?,event: freezed == event ? _self.event : event // ignore: cast_nullable_to_non_nullable
 as RootTunEvent?,pendingCommands: null == pendingCommands ? _self.pendingCommands : pendingCommands // ignore: cast_nullable_to_non_nullable
 as int,cleanupSupported: null == cleanupSupported ? _self.cleanupSupported : cleanupSupported // ignore: cast_nullable_to_non_nullable
+as bool,autostartSupported: null == autostartSupported ? _self.autostartSupported : autostartSupported // ignore: cast_nullable_to_non_nullable
 as bool,
   ));
 }

@@ -82,7 +82,7 @@ final class RootTunControllerProvider
   }
 }
 
-String _$rootTunControllerHash() => r'd240c84d23c413bec8d232fad8d610286311ede6';
+String _$rootTunControllerHash() => r'3f480f0535c4ff85f27d6428749f5fab937759dd';
 
 abstract class _$RootTunController extends $Notifier<RootTunViewState> {
   RootTunViewState build();

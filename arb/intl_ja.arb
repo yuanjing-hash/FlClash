@@ -963,7 +963,7 @@
   "rootTunAutostart": "Start at boot",
   "rootTunNativeUnavailable": "Native layer is not ready. Expand diagnostics for channel errors.",
   "rootTunLoading": "Reading native state…",
-  "rootTunStale": "State is unverified. Check again before changing settings.",
+  "rootTunStale": "状態を確認中です。再確認するか、Root TUN を停止できます。",
   "rootTunRecheck": "Check again",
   "rootTunAuthorizedRecheck": "I have authorized, check again",
   "rootTunManagerGuide": "Authorize FlClash in your root manager",

@@ -141,6 +141,7 @@ void main() {
       return rootTunSuccess({
         'path': '/data/user/0/app/cache/diagnostics.zip',
         'sizeBytes': 123,
+        'mimeType': 'application/zip',
       });
     });
     final plugin = RootTunPlugin();
@@ -148,8 +149,72 @@ void main() {
       (await plugin.getLogs(cursor: 'before', limit: 1)).data!.nextCursor,
       '1',
     );
-    expect((await plugin.exportDiagnostics()).data!.sizeBytes, 123);
+    final diagnostics = (await plugin.exportDiagnostics()).data!;
+    expect(diagnostics.sizeBytes, 123);
+    expect(diagnostics.mimeType, 'application/zip');
     expect(() => plugin.getLogs(limit: 501), throwsRangeError);
+  });
+
+  testWidgets('export has a 20 second timeout, commands 2 and getters 3', (
+    tester,
+  ) async {
+    final pending = <String, Completer<Object?>>{
+      for (final method in ['start', 'getState', 'exportDiagnostics'])
+        method: Completer<Object?>(),
+    };
+    messenger.setMockMethodCallHandler(
+      channel,
+      (call) => pending[call.method]!.future,
+    );
+    final plugin = RootTunPlugin();
+    final timeout = isA<RootTunChannelException>().having(
+      (e) => e.code,
+      'code',
+      'timeout',
+    );
+    final start = expectLater(plugin.start(), throwsA(timeout));
+    var getterDone = false;
+    final getter = expectLater(
+      plugin.getState(),
+      throwsA(timeout),
+    ).then((_) => getterDone = true);
+    var exported = false;
+    final export = plugin.exportDiagnostics().then((result) {
+      exported = true;
+      return result.data!;
+    });
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 2));
+    await start;
+    expect(getterDone, false);
+    expect(exported, false);
+    await tester.pump(const Duration(seconds: 1));
+    await getter;
+    await tester.pump(const Duration(seconds: 16));
+    expect(exported, false);
+    pending['exportDiagnostics']!.complete(
+      rootTunSuccess({
+        'path': '/data/user/0/app/cache/diagnostics.zip',
+        'sizeBytes': 123,
+        'mimeType': 'application/zip',
+      }),
+    );
+    await tester.pump();
+    expect((await export).mimeType, 'application/zip');
+
+    pending['exportDiagnostics'] = Completer<Object?>();
+    const id = '7fb480b6-08a9-4113-8505-912671462d51';
+    final timedOutExport = expectLater(
+      plugin.exportDiagnostics(requestId: id),
+      throwsA(timeout.having((e) => e.requestId, 'requestId', id)),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(seconds: 20));
+    await timedOutExport;
+    for (final completer in pending.values) {
+      if (!completer.isCompleted) completer.complete(null);
+    }
+    await tester.pump();
   });
 
   test(

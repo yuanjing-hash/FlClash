@@ -963,7 +963,7 @@
   "rootTunAutostart": "开机自启",
   "rootTunNativeUnavailable": "原生层未就绪，请展开诊断信息查看通道错误。",
   "rootTunLoading": "正在读取原生状态…",
-  "rootTunStale": "状态尚未核对，请重新检测。核对前无法更改设置。",
+  "rootTunStale": "状态核对中，可重新检测或停止 Root TUN。",
   "rootTunRecheck": "重新检测",
   "rootTunAuthorizedRecheck": "我已授权，重新检测",
   "rootTunManagerGuide": "请到管理器中给 FlClash 授权",

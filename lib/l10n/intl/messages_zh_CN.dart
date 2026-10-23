@@ -1256,7 +1256,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "rootTunOpenManager": MessageLookupByLibrary.simpleMessage("打开管理器"),
     "rootTunRecheck": MessageLookupByLibrary.simpleMessage("重新检测"),
     "rootTunStale": MessageLookupByLibrary.simpleMessage(
-      "状态尚未核对，请重新检测。核对前无法更改设置。",
+      "状态核对中，可重新检测或停止 Root TUN。",
     ),
     "rootTunStateAwaitingAuth": MessageLookupByLibrary.simpleMessage("等待授权"),
     "rootTunStateDegraded": MessageLookupByLibrary.simpleMessage("降级"),
