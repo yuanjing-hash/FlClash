@@ -19,8 +19,14 @@ case "$name" in
         esac
         ;;
     log) printf '%s\n' "$*" >> "$FAKE_NET/logcat" ;;
-    settings) echo off ;;
-    nc) [ ! -f "$FAKE_NET/unhealthy" ] && printf 'HTTP/1.0 200 OK\r\n\r\n' ;;
+    settings)
+        if [ -f "$FAKE_NET/slow-settings" ]; then touch "$FAKE_NET/settings-delayed"; sleep 1.5; fi
+        echo off
+        ;;
+    nc)
+        if [ -f "$FAKE_NET/health-timeout" ]; then touch "$FAKE_NET/health-delayed"; sleep 2; exit 1; fi
+        [ ! -f "$FAKE_NET/unhealthy" ] && printf 'HTTP/1.0 200 OK\r\n\r\n'
+        ;;
     iptables-save|ip6tables-save)
         echo '*filter'
         echo ':OUTPUT ACCEPT [0:0]'

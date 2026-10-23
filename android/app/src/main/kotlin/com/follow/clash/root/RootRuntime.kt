@@ -181,6 +181,7 @@ internal class RootRuntime(
             ).success
 
     fun delete(): Boolean {
+        if (!command("cleanup", 4_000).success) return false
         val retained =
             shell.root(
                 "for f in core.log validation.log watchdog.log transitions.log boot.log; do echo \"[\$f]\"; tail -c 131072 $BASE/logs/\$f 2>/dev/null; done",
@@ -241,8 +242,8 @@ internal class RootRuntime(
 
     fun restoreDiffExists(): Boolean = shell.root("[ -s $BASE/logs/restore-diff.txt ]").success
 
-    fun healthy(): Boolean {
-        if (!status().success) return false
+    fun healthy(status: ShellResult = status()): Boolean {
+        if (!status.success) return false
         return apiHealthy()
     }
 

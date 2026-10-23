@@ -44,7 +44,7 @@ wait_for() {
     wait_attempt=0
     until "$@"; do
         wait_attempt=$((wait_attempt + 1))
-        if [ "$wait_attempt" -gt 150 ]; then
+            if [ "$wait_attempt" -gt 400 ]; then
             echo "FAIL timeout: $1" >&2
             cat "$R/state/status" "$R/logs/"*.log 2>/dev/null >&2 || true
             exit 1
@@ -69,6 +69,13 @@ sleep 0.2
 [ "$watchdog" = "$(pid_of watchdog)" ]
 [ "$core" = "$(pid_of core)" ]
 echo 'PASS singleton start'
+touch "$FAKE_NET/slow-settings"
+wait_for test -f "$FAKE_NET/settings-delayed"
+sleep 7
+[ "$supervisor" = "$(pid_of supervisor)" ] && [ "$watchdog" = "$(pid_of watchdog)" ]
+if grep -q 'supervisor takeover' "$R/logs/watchdog.log"; then exit 1; fi
+rm -f "$FAKE_NET/slow-settings"
+echo 'PASS supervisor rounds of 2.5 seconds do not trigger watchdog takeover'
 echo timeout > "$FAKE_NET/package"
 sleep 3
 [ "$watchdog" = "$(pid_of watchdog)" ] && [ "$core" = "$(pid_of core)" ]
@@ -92,6 +99,19 @@ wait_for changed supervisor "$supervisor"
 supervisor=$(pid_of supervisor)
 TEST_PIDS="$TEST_PIDS $supervisor"
 echo 'PASS supervisor takeover without core restart'
+touch "$FAKE_NET/health-timeout"
+: > "$FAKE_NET/calls"
+kill -KILL "$supervisor"
+wait_for test -f "$FAKE_NET/health-delayed"
+sleep 4
+[ -f "$R/state/owned" ] && [ -f "$FAKE_NET/iptables.guard" ]
+if grep -E '(-D OUTPUT|-X FCR_OUTPUT|rule del|route flush|link delete)' "$FAKE_NET/calls"; then exit 1; fi
+rm -f "$FAKE_NET/health-timeout"
+wait_for changed supervisor "$supervisor"
+[ "$core" = "$(pid_of core)" ]
+supervisor=$(pid_of supervisor)
+TEST_PIDS="$TEST_PIDS $supervisor"
+echo 'PASS slow health checks retry behind the guard and recover without restarting core'
 : > "$FAKE_NET/calls"
 kill -KILL "$core"
 wait_for changed core "$core"
@@ -106,7 +126,7 @@ wait_for grep -q "failed CORE_RECOVERY_FAILED" "$R/state/status"
 [ ! -f "$R/state/owned" ] && [ ! -f "$FAKE_NET/tun" ]
 [ ! -s "$R/logs/restore-diff.txt" ]
 echo 'PASS supervisor and core loss cleans network'
-run stop
+run cleanup
 wait_for test ! -f "$R/run/watchdog.pid"
 run start
 wait_for is_running
@@ -117,8 +137,21 @@ boot_ticks=$(sed 's/.*) //' "/proc/$boot_pid/stat" | awk '{print $20}')
 printf '%s %s %s\n' "$boot_pid" "$boot_ticks" "$(cat /proc/sys/kernel/random/boot_id)" > "$R/run/boot.lock"
 run stop
 wait "$boot_pid" 2>/dev/null || true
+wait_for test ! -f "$R/run/supervisor.pid"
+[ ! -f "$R/run/core.pid" ] && [ -f "$R/run/watchdog.pid" ]
+run cleanup
 wait_for stopped
-echo 'PASS normal stop removes all managed processes'
+echo 'PASS proxyStop keeps uninstall monitor; explicit cleanup removes all managed processes'
+mkdir "$R/run/owner.lock"
+printf '999999 1 previous-boot\n' > "$R/run/supervisor.pid"
+run start
+wait_for ready
+run cleanup
+wait_for stopped
+mkdir "$R/run/owner.lock"
+run cleanup
+[ ! -d "$R/run/owner.lock" ]
+echo 'PASS legacy directory owner lock after reboot permits start and stop'
 run start
 wait_for ready
 supervisor=$(pid_of supervisor)

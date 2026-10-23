@@ -34,23 +34,47 @@ boot_seconds() {
     cut -d. -f1 /proc/uptime
 }
 
-lock() {
+lock() (
     lock_path=$RUN/$1.lock
-    [ ! -d "$lock_path" ] || return 1
+    if [ -d "$lock_path" ]; then
+        [ "$1" = owner ] && ! alive "$RUN/supervisor.pid" || return 1
+        rmdir "$lock_path" 2>/dev/null || return 1
+    fi
     candidate=$RUN/$1.candidate.$$
     printf '%s\n' "$IDENTITY" > "$candidate"
     if ! ln "$candidate" "$lock_path" 2>/dev/null; then
         if alive "$lock_path"; then rm -f "$candidate"; return 1; fi
-        stale_identity=$(cat "$lock_path" 2>/dev/null)
-        if [ "$stale_identity" != "$(cat "$lock_path" 2>/dev/null)" ] || alive "$lock_path"; then
+        snapshot_path=$RUN/$1.snapshot.$$
+        if ! ln "$lock_path" "$snapshot_path" 2>/dev/null; then rm -f "$candidate"; return 1; fi
+        if alive "$snapshot_path"; then rm -f "$candidate" "$snapshot_path"; return 1; fi
+        stale_identity=$(cat "$snapshot_path")
+        rm -f "$snapshot_path"
+        stale_key=$(printf '%s' "$stale_identity" | cksum | awk '{print $1 "-" $2}')
+        # Serialize reapers of this identity before touching its successor's pathname.
+        reaper=$1.reaper.$stale_key
+        if ! lock "$reaper"; then
             rm -f "$candidate"
             return 1
         fi
-        rm -f "$lock_path"
-        if ! ln "$candidate" "$lock_path" 2>/dev/null; then rm -f "$candidate"; return 1; fi
+        if [ "$stale_identity" != "$(cat "$lock_path" 2>/dev/null)" ] || alive "$lock_path"; then
+            unlock "$reaper"
+            rm -f "$candidate"
+            return 1
+        fi
+        stale_path=$RUN/$1.stale.$$
+        if ! mv "$lock_path" "$stale_path" 2>/dev/null; then unlock "$reaper"; rm -f "$candidate"; return 1; fi
+        if [ "$stale_identity" != "$(cat "$stale_path" 2>/dev/null)" ] || alive "$stale_path"; then
+            ln "$stale_path" "$lock_path" 2>/dev/null || true
+            rm -f "$candidate" "$stale_path"
+            unlock "$reaper"
+            return 1
+        fi
+        rm -f "$stale_path"
+        if ! ln "$candidate" "$lock_path" 2>/dev/null; then unlock "$reaper"; rm -f "$candidate"; return 1; fi
+        unlock "$reaper"
     fi
     rm -f "$candidate"
-}
+)
 
 wait_control() {
     for _lock_attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
@@ -103,7 +127,7 @@ fresh() {
     beat_ms=$(printf '%s\n' "$beat" | sed -n 's/.*"bootMs":\([0-9]*\),.*/\1/p')
     [ -n "$beat_ms" ] || return 1
     beat_age=$(($(boot_seconds) - beat_ms / 1000))
-    [ "$beat_age" -ge 0 ] && [ "$beat_age" -le 2 ]
+    [ "$beat_age" -ge 0 ] && [ "$beat_age" -le 5 ]
 }
 
 detach() {
@@ -357,7 +381,16 @@ supervise() {
     fi
     trap 'touch "$RUN/stop"' TERM INT HUP
     rm -f "$RUN/healthy"
-    if [ "${1:-}" = adopt ] && core_healthy && network_intact; then
+    adopt_ready=0
+    if [ "${1:-}" = adopt ]; then
+        adopt_deadline=$(cat "$RUN/adopt-deadline" 2>/dev/null) || adopt_deadline=$(($(boot_seconds) + 24))
+        while [ ! -f "$RUN/stop" ] && [ "$(boot_seconds)" -lt "$adopt_deadline" ]; do
+            heartbeat supervisor
+            if core_healthy && network_intact; then adopt_ready=1; break; fi
+            sleep 1
+        done
+    fi
+    if [ "${1:-}" = adopt ] && [ "$adopt_ready" -eq 1 ]; then
         [ -f "$STATE/owned.boot" ] || printf '%s\n' "$BOOT" > "$STATE/owned.boot"
         if ! iptables -w 1 -C FCR_OUTPUT ! -o flcrtun0 -j REJECT; then
             if ! iptables -w 1 -A FCR_OUTPUT ! -o flcrtun0 -j REJECT; then
@@ -560,12 +593,14 @@ autostart_requested() {
         done
         write_settings || return 2
     fi
-    grep -qx '{"schemaVersion":1,"rootTunEnabled":\(true\|false\),"autostartEnabled":\(true\|false\)}' "$R/config/settings.json" || return 2
+    grep -Eqx '\{"schemaVersion":1,"rootTunEnabled":(true|false),"autostartEnabled":(true|false)\}' "$R/config/settings.json" || return 2
     grep -qx '{"schemaVersion":1,"rootTunEnabled":true,"autostartEnabled":true}' "$R/config/settings.json"
 }
 
 user_unlocked() {
-    [ "$(timeout -s KILL 1 cmd user is-user-unlocked 0 2>/dev/null)" = true ]
+    user_state=$(timeout -s KILL 1 am get-started-user-state 0 2>/dev/null) || user_state=''
+    [ "$user_state" = RUNNING_UNLOCKED ] ||
+        [ "$(getprop sys.user.0.ce_available 2>/dev/null)" = true ]
 }
 
 prune_boot_markers() {
@@ -652,6 +687,7 @@ revoke_runtime() {
         echo 0 > "$R/config/autostart-enabled"
         write_settings
         printf '%s\n' revoked > "$STATE/auth-status"
+        [ -f "$STATE/revoked-since" ] || boot_seconds > "$STATE/revoked-since"
         publish failed "$1"
         runtime_log watchdog "$1 cleanup complete"
         cmd notification post -t 'FlClash Root TUN' flclash-root "$1" >/dev/null 2>&1 || true
@@ -734,11 +770,18 @@ watchdog() {
             next_auth_check=$(($(boot_seconds) + 2))
             start_probe auth
         fi
-        if [ "$(cat "$STATE/auth-status" 2>/dev/null)" = revoked ]; then sleep 1; continue; fi
+        if [ "$(cat "$STATE/auth-status" 2>/dev/null)" = revoked ]; then
+            revoked_since=$(cat "$STATE/revoked-since" 2>/dev/null) || revoked_since=$(boot_seconds)
+            if [ $(($(boot_seconds) - revoked_since)) -ge 600 ]; then
+                runtime_log watchdog 'revocation monitoring expired after cleanup'
+                return 0
+            fi
+            sleep 1
+            continue
+        fi
         if [ ! -f "$STATE/owned" ]; then
             case "$(cat "$STATE/status" 2>/dev/null)" in
-                disabled*) return 0 ;;
-                failed*) sleep 1; continue ;;
+                disabled*|failed*) sleep 1; continue ;;
             esac
         fi
         if ! fresh supervisor && lock control; then
@@ -748,15 +791,18 @@ watchdog() {
             if claim_owner; then
                 if [ -f "$RUN/stop" ]; then
                     publish stopping
-                    if cleanup; then publish disabled; unlock owner; unlock control; return 0; fi
+                    if cleanup; then publish disabled; unlock owner; unlock control; sleep 1; continue; fi
                     publish stopping CLEANUP_FAILED
-                elif [ $(($(boot_seconds) - orphan_since)) -lt 24 ] && core_healthy && network_intact; then
-                    runtime_log watchdog "supervisor takeover generation=$generation"
-                    heartbeat watchdog
-                    unlock owner
-                    detach supervise adopt
-                    unlock control
-                    sleep 1
+                elif [ $(($(boot_seconds) - orphan_since)) -lt 24 ]; then
+                    if core_healthy && network_intact; then
+                        runtime_log watchdog "supervisor takeover generation=$generation"
+                        printf '%s\n' "$((orphan_since + 24))" > "$RUN/adopt-deadline"
+                        heartbeat watchdog
+                        unlock owner
+                        detach supervise adopt
+                        unlock control
+                        sleep 1
+                    fi
                 else
                     runtime_log watchdog 'supervisor/core lost; fail-open cleanup'
                     publish stopping CORE_RECOVERY_FAILED
@@ -775,7 +821,6 @@ watchdog() {
         else
             orphan_since=0
         fi
-        if [ -f "$RUN/stop" ] && [ ! -f "$STATE/owned" ] && ! alive "$RUN/supervisor.pid"; then return 0; fi
         rotate_log watchdog
         sleep 1
     done
@@ -794,7 +839,11 @@ stop_runtime() {
     publish stopping
     if ! cleanup; then publish stopping CLEANUP_FAILED; unlock owner; return 1; fi
     publish disabled
-    if alive "$RUN/watchdog.pid"; then kill -TERM "$recorded_pid"; fi
+    if [ "${1:-stop}" = cleanup ]; then
+        if alive "$RUN/watchdog.pid"; then kill -TERM "$recorded_pid"; fi
+    else
+        ensure_watchdog
+    fi
     unlock owner
     rm -f "$RUN/supervisor.pid" "$RUN/supervisor.heartbeat" "$RUN/healthy"
 }
@@ -823,7 +872,7 @@ case "${1:-}" in
         if ! wait_control; then exit 1; fi
         if fresh supervisor; then ensure_watchdog; unlock control; exit 0; fi
         printf '%s\n' "$BOOT" > "$RUN/boot-id.tmp" && mv "$RUN/boot-id.tmp" "$RUN/boot-id"
-        rm -f "$RUN/stop" "$STATE/auth-status" "$STATE/revocation-code"
+        rm -f "$RUN/stop" "$STATE/auth-status" "$STATE/revocation-code" "$STATE/revoked-since" "$RUN/adopt-deadline"
         if [ ! -f "$STATE/owned" ]; then rm -f "$RUN/crash-times"; fi
         if [ -d "$RUN/owner.lock" ] && [ ! -f "$RUN/generation" ] && core_healthy; then
             if alive "$RUN/supervisor.pid"; then kill -KILL "$recorded_pid"; fi
@@ -846,7 +895,7 @@ case "${1:-}" in
     watchdog) watchdog ;;
     stop|cleanup)
         wait_control || exit 1
-        stop_runtime
+        stop_runtime "$1"
         result=$?
         unlock control
         exit "$result"
