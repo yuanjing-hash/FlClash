@@ -74,6 +74,8 @@ sudo dnf install libayatana-appindicator-gtk3     # Fedora
 
 ## Usage
 
+Android Root TUN is available in Network settings. Native integration and diagnostic export details are in [the Flutter integration notes](docs/root-tun/flutter.md).
+
 **Import a profile from a link.** Opening a link in this form imports the subscription into FlClash. The `clashmeta://`
 and `flclash://` schemes work the same way.
 

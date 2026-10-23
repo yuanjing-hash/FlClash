@@ -1,4 +1,9 @@
+import 'dart:async';
+
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/common/root_tun_labels.dart';
+import 'package:fl_clash/models/root_tun.dart';
+import 'package:fl_clash/providers/root_tun.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/ui/ui.dart';
@@ -292,6 +297,100 @@ class VpnCard extends ConsumerWidget {
             semanticLabel: 'VPN',
             onChanged: change,
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class RootTunStatusCard extends ConsumerStatefulWidget {
+  const RootTunStatusCard({super.key});
+
+  @override
+  ConsumerState<RootTunStatusCard> createState() => _RootTunStatusCardState();
+}
+
+class _RootTunStatusCardState extends ConsumerState<RootTunStatusCard>
+    with WidgetsBindingObserver {
+  Timer? _bannerTimer;
+  String? _transientCode;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(
+      Future<void>.microtask(() async {
+        if (mounted) {
+          await ref.read(rootTunControllerProvider.notifier).detectRoot();
+        }
+      }),
+    );
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _bannerTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(ref.read(rootTunControllerProvider.notifier).detectRoot());
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l = context.appLocalizations;
+    final value = ref.watch(rootTunControllerProvider);
+    ref.listen(rootTunControllerProvider.select((state) => state.event), (
+      _,
+      event,
+    ) {
+      _bannerTimer?.cancel();
+      setState(() => _transientCode = event?.code);
+      _bannerTimer = Timer(const Duration(seconds: 5), () {
+        if (mounted) setState(() => _transientCode = null);
+      });
+    });
+    final snapshot = value.snapshot;
+    const bannerCodes = {
+      RootTunCode.coreCrashedRecovering,
+      RootTunCode.coreRecovered,
+      RootTunCode.coreRecoveryFailed,
+      RootTunCode.lastSessionAbnormalExit,
+      RootTunCode.modeSwitching,
+      RootTunCode.alwaysOnVpnConflict,
+      RootTunCode.privateDnsStrict,
+      RootTunCode.autostartFailed,
+    };
+    final codes = <String>{
+      if (snapshot?.lastErrorCode case final code?
+          when bannerCodes.contains(code))
+        code,
+      for (final warning in snapshot?.warnings ?? <String>[])
+        if (bannerCodes.contains(warning)) warning,
+      if (_transientCode case final code? when bannerCodes.contains(code)) code,
+    };
+    final text = snapshot == null
+        ? l.rootTunNoSnapshot
+        : [
+            '${l.rootTunMode}: ${rootTunModeLabel(snapshot.mode, l)} · ${rootTunStateLabel(snapshot.state, l)}',
+            '${l.rootTunManager}: ${rootTunManagerLabel(snapshot.rootManager, l)} · ${rootTunAuthLabel(snapshot.authStatus, l)}',
+            '${l.rootTunAutostart}: ${snapshot.rootTunEnabled && snapshot.autostartEnabled ? l.enabled : l.disabled}',
+            if (snapshot.stale) l.rootTunStale,
+          ].join('\n');
+    return DashboardCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        spacing: 8,
+        children: [
+          Text(text, style: AppTextStyle.footnote.of(context)),
+          if (value.channelAvailable == false) Text(l.rootTunNativeUnavailable),
+          for (final code in codes) Text(rootTunErrorLabel(code, l)),
         ],
       ),
     );

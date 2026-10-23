@@ -169,34 +169,44 @@ class MessageLookup extends MessageLookupByLibrary {
   static String m68(count, label) =>
       "${Intl.plural(count, other: '${label} 个策略组')}";
 
-  static String m69(count, label) =>
+  static String m69(seconds) => "等待 root 授权，剩余 ${seconds} 秒";
+
+  static String m70(manager) =>
+      "仍未检测到 root 授权，请确认已在 ${manager} 管理器中为 FlClash Root 打开授权开关。";
+
+  static String m71(manager) =>
+      "需要在 ${manager} 管理器中为 FlClash Root（com.follow.clash.root）授予 root 权限。授权完成后返回此处点“我已授权，重新检测”。";
+
+  static String m72(error) => "诊断导出失败：${error}";
+
+  static String m73(count, label) =>
       "${Intl.plural(count, other: '${label} 条规则')}";
 
-  static String m70(appName) => "${appName}（安全模式）";
+  static String m74(appName) => "${appName}（安全模式）";
 
-  static String m71(count) => "${count} 秒";
+  static String m75(count) => "${count} 秒";
 
-  static String m72(count) => "${count} 项生效";
+  static String m76(count) => "${count} 项生效";
 
-  static String m73(count) => "${count} 项异常";
+  static String m77(count) => "${count} 项异常";
 
-  static String m74(time) => "检测于 ${time}";
+  static String m78(time) => "检测于 ${time}";
 
-  static String m75(count) => "${count} 项设置";
+  static String m79(count) => "${count} 项设置";
 
-  static String m76(link) => "无法从 ${link} 中读取代理";
+  static String m80(link) => "无法从 ${link} 中读取代理";
 
-  static String m77(label) => "${label}只能是一项";
+  static String m81(label) => "${label}只能是一项";
 
-  static String m78(value) => "峰值 ${value}";
+  static String m82(value) => "峰值 ${value}";
 
-  static String m79(value) => "累计 ${value}";
+  static String m83(value) => "累计 ${value}";
 
-  static String m80(label) => "${label}必须为URL";
+  static String m84(label) => "${label}必须为URL";
 
-  static String m81(count) => "${count} 年前";
+  static String m85(count) => "${count} 年前";
 
-  static String m82(count) => "${count} 年前";
+  static String m86(count) => "${count} 年前";
 
   final messages = _notInlinedMessages(_notInlinedMessages);
   static Map<String, Function> _notInlinedMessages(_) => <String, Function>{
@@ -1120,6 +1130,145 @@ class MessageLookup extends MessageLookupByLibrary {
     "restoreSuccess": MessageLookupByLibrary.simpleMessage("恢复成功"),
     "result": MessageLookupByLibrary.simpleMessage("结果"),
     "retry": MessageLookupByLibrary.simpleMessage("重试"),
+    "rootTun": MessageLookupByLibrary.simpleMessage("Root TUN"),
+    "rootTunAuth": MessageLookupByLibrary.simpleMessage("授权状态"),
+    "rootTunAuthCountdown": m69,
+    "rootTunAuthDenied": MessageLookupByLibrary.simpleMessage("被拒绝"),
+    "rootTunAuthGranted": MessageLookupByLibrary.simpleMessage("已授权"),
+    "rootTunAuthNotGranted": MessageLookupByLibrary.simpleMessage("未授权"),
+    "rootTunAuthRevoked": MessageLookupByLibrary.simpleMessage("已撤销"),
+    "rootTunAuthUnknown": MessageLookupByLibrary.simpleMessage("未确定"),
+    "rootTunAuthorizedRecheck": MessageLookupByLibrary.simpleMessage(
+      "我已授权，重新检测",
+    ),
+    "rootTunAutostart": MessageLookupByLibrary.simpleMessage("开机自启"),
+    "rootTunChannel": MessageLookupByLibrary.simpleMessage("通道是否可用"),
+    "rootTunChannelAvailable": MessageLookupByLibrary.simpleMessage("可用"),
+    "rootTunCleanup": MessageLookupByLibrary.simpleMessage("清理 Root TUN 残留"),
+    "rootTunDiagnostics": MessageLookupByLibrary.simpleMessage("诊断信息"),
+    "rootTunErrorAlwaysOnVpnConflict": MessageLookupByLibrary.simpleMessage(
+      "系统已将 FlClash 设为“始终开启的 VPN”，与当前所选的 Root TUN 模式冲突。FlClash 将按 Root TUN 运行，请在系统设置中关闭“始终开启的 VPN”；若开启了“屏蔽未使用 VPN 的连接”，可能导致断网，请一并关闭。",
+    ),
+    "rootTunErrorAndroidVersionUnsupported":
+        MessageLookupByLibrary.simpleMessage("Root TUN 需要 Android 10 及以上版本。"),
+    "rootTunErrorAutostartFailed": MessageLookupByLibrary.simpleMessage(
+      "开机自启未成功（网络未就绪或配置不可读），网络保持直连。",
+    ),
+    "rootTunErrorAutostartRootRevoked": MessageLookupByLibrary.simpleMessage(
+      "开机自启失败：root 授权已被撤销，网络保持直连。",
+    ),
+    "rootTunErrorCleanupFailed": MessageLookupByLibrary.simpleMessage(
+      "清理 Root TUN 规则未完全成功，可能影响上网。",
+    ),
+    "rootTunErrorCoreCrashLoop": MessageLookupByLibrary.simpleMessage(
+      "代理核心 5 分钟内连续崩溃 3 次，已停止自动重试并切换为直连。",
+    ),
+    "rootTunErrorCoreCrashedRecovering": MessageLookupByLibrary.simpleMessage(
+      "代理核心异常退出，正在自动恢复…",
+    ),
+    "rootTunErrorCoreRecovered": MessageLookupByLibrary.simpleMessage(
+      "代理已自动恢复。",
+    ),
+    "rootTunErrorCoreRecoveryFailed": MessageLookupByLibrary.simpleMessage(
+      "自动恢复失败，已切换为直连，网络可正常使用但未经代理。",
+    ),
+    "rootTunErrorCoreStartFailed": MessageLookupByLibrary.simpleMessage(
+      "代理核心启动失败，请检查配置。",
+    ),
+    "rootTunErrorDnsTakeoverFailed": MessageLookupByLibrary.simpleMessage(
+      "DNS 接管失败，为避免泄露已停止 Root TUN。",
+    ),
+    "rootTunErrorLastSessionAbnormalExit": MessageLookupByLibrary.simpleMessage(
+      "上次 Root TUN 异常退出，当前网络状态已核对。",
+    ),
+    "rootTunErrorModeSwitchFailed": MessageLookupByLibrary.simpleMessage(
+      "模式切换失败，已恢复直连。",
+    ),
+    "rootTunErrorModeSwitching": MessageLookupByLibrary.simpleMessage(
+      "正在切换代理模式（VPN ↔ Root TUN），请稍候。",
+    ),
+    "rootTunErrorNetworkRulesApplyFailed": MessageLookupByLibrary.simpleMessage(
+      "网络规则写入失败，已回滚，网络未受影响。",
+    ),
+    "rootTunErrorPrivateDnsAutoTakenOver": MessageLookupByLibrary.simpleMessage(
+      "已接管系统“私人 DNS（自动）”，DNS 查询将经由 FlClash。",
+    ),
+    "rootTunErrorPrivateDnsStrict": MessageLookupByLibrary.simpleMessage(
+      "系统“私人 DNS”已指定服务器，DNS 不会经由 FlClash，分流规则可能不准确。如需完整接管，请将私人 DNS 设为“自动”或“关闭”。",
+    ),
+    "rootTunErrorRootGrantNotDetected": m70,
+    "rootTunErrorRootGrantRequiredInManager": m71,
+    "rootTunErrorRootManagerUnsupported": MessageLookupByLibrary.simpleMessage(
+      "当前 root 方案不受支持，Root TUN 仅支持 Magisk、KernelSU、APatch。",
+    ),
+    "rootTunErrorRootNotFound": MessageLookupByLibrary.simpleMessage(
+      "未检测到 root 权限，Root TUN 不可用。你仍可使用 VPN 模式。",
+    ),
+    "rootTunErrorRootPermissionDenied": MessageLookupByLibrary.simpleMessage(
+      "root 授权被拒绝，Root TUN 未开启。",
+    ),
+    "rootTunErrorRootPermissionRevoked": MessageLookupByLibrary.simpleMessage(
+      "root 授权已被撤销，Root TUN 已停止，网络已恢复直连。",
+    ),
+    "rootTunErrorRootPermissionTimeout": MessageLookupByLibrary.simpleMessage(
+      "等待 root 授权超时（30 秒），Root TUN 未开启。",
+    ),
+    "rootTunErrorStartTimeout": MessageLookupByLibrary.simpleMessage(
+      "Root TUN 启动超时（10 秒），已回滚。",
+    ),
+    "rootTunErrorTunCreateFailed": MessageLookupByLibrary.simpleMessage(
+      "创建虚拟网卡失败，Root TUN 未开启，网络未受影响。",
+    ),
+    "rootTunErrorTunDeviceUnsupported": MessageLookupByLibrary.simpleMessage(
+      "设备内核不支持 TUN，无法开启 Root TUN。",
+    ),
+    "rootTunExport": MessageLookupByLibrary.simpleMessage("导出诊断日志"),
+    "rootTunExportFailed": m72,
+    "rootTunExportUnsupported": MessageLookupByLibrary.simpleMessage(
+      "原生端尚未支持导出诊断",
+    ),
+    "rootTunFailureAdvice": MessageLookupByLibrary.simpleMessage(
+      "请检查 root 授权、当前配置或模块冲突，重试或查看日志。清理失败时可清理残留，仍失败请重启设备。",
+    ),
+    "rootTunLastChannelError": MessageLookupByLibrary.simpleMessage("最后一次通道错误"),
+    "rootTunLastError": MessageLookupByLibrary.simpleMessage("最近错误"),
+    "rootTunLoadMore": MessageLookupByLibrary.simpleMessage("加载更多"),
+    "rootTunLoading": MessageLookupByLibrary.simpleMessage("正在读取原生状态…"),
+    "rootTunLogs": MessageLookupByLibrary.simpleMessage("Root TUN 日志"),
+    "rootTunLogsEmpty": MessageLookupByLibrary.simpleMessage("暂无 Root TUN 日志"),
+    "rootTunManager": MessageLookupByLibrary.simpleMessage("root 方案"),
+    "rootTunManagerGuide": MessageLookupByLibrary.simpleMessage(
+      "请到管理器中给 FlClash 授权",
+    ),
+    "rootTunManagerNone": MessageLookupByLibrary.simpleMessage("未检测到"),
+    "rootTunManagerOpenFailed": MessageLookupByLibrary.simpleMessage(
+      "无法打开管理器，请从手机桌面打开 KernelSU/APatch，为 FlClash 授权后返回。",
+    ),
+    "rootTunManagerUnknown": MessageLookupByLibrary.simpleMessage("未确定/不支持"),
+    "rootTunMode": MessageLookupByLibrary.simpleMessage("当前模式"),
+    "rootTunNativeUnavailable": MessageLookupByLibrary.simpleMessage(
+      "原生层未就绪，请展开诊断信息查看通道错误。",
+    ),
+    "rootTunNoSnapshot": MessageLookupByLibrary.simpleMessage(
+      "尚未收到原生 Snapshot",
+    ),
+    "rootTunOff": MessageLookupByLibrary.simpleMessage("关闭"),
+    "rootTunOpenManager": MessageLookupByLibrary.simpleMessage("打开管理器"),
+    "rootTunRecheck": MessageLookupByLibrary.simpleMessage("重新检测"),
+    "rootTunStale": MessageLookupByLibrary.simpleMessage(
+      "状态核对中，可重新检测或停止 Root TUN。",
+    ),
+    "rootTunStateAwaitingAuth": MessageLookupByLibrary.simpleMessage("等待授权"),
+    "rootTunStateDegraded": MessageLookupByLibrary.simpleMessage("降级"),
+    "rootTunStateDisabled": MessageLookupByLibrary.simpleMessage("未启用"),
+    "rootTunStateFailed": MessageLookupByLibrary.simpleMessage("失败"),
+    "rootTunStateRecovering": MessageLookupByLibrary.simpleMessage("恢复中"),
+    "rootTunStateRunning": MessageLookupByLibrary.simpleMessage("运行中"),
+    "rootTunStateStarting": MessageLookupByLibrary.simpleMessage("启动中"),
+    "rootTunStateStopping": MessageLookupByLibrary.simpleMessage("停止中/清理中"),
+    "rootTunTimeout": MessageLookupByLibrary.simpleMessage(
+      "等待原生响应超时；命令未取消。请刷新状态，不要反复切换开关。",
+    ),
     "routeAddress": MessageLookupByLibrary.simpleMessage("路由地址"),
     "routeExcludeAddress": MessageLookupByLibrary.simpleMessage("排除路由地址"),
     "routingMark": MessageLookupByLibrary.simpleMessage("路由标记"),
@@ -1237,12 +1386,12 @@ class MessageLookup extends MessageLookupByLibrary {
       "规则必须以受支持的类型开头，例如 DOMAIN,example.com,DIRECT",
     ),
     "rules": MessageLookupByLibrary.simpleMessage("规则"),
-    "rulesCount": m69,
+    "rulesCount": m73,
     "runTime": MessageLookupByLibrary.simpleMessage("运行时长"),
     "running": MessageLookupByLibrary.simpleMessage("运行中"),
     "runtimeConfig": MessageLookupByLibrary.simpleMessage("运行时配置"),
     "safeMode": MessageLookupByLibrary.simpleMessage("安全模式"),
-    "safeModeAppTitle": m70,
+    "safeModeAppTitle": m74,
     "saturation": MessageLookupByLibrary.simpleMessage("饱和度"),
     "save": MessageLookupByLibrary.simpleMessage("保存"),
     "saveChanges": MessageLookupByLibrary.simpleMessage("是否保存更改？"),
@@ -1251,21 +1400,21 @@ class MessageLookup extends MessageLookupByLibrary {
     "scrollToSelected": MessageLookupByLibrary.simpleMessage("滚动到已选"),
     "search": MessageLookupByLibrary.simpleMessage("搜索"),
     "seconds": MessageLookupByLibrary.simpleMessage("秒"),
-    "secondsCount": m71,
+    "secondsCount": m75,
     "secretKey": MessageLookupByLibrary.simpleMessage("密钥"),
-    "sectionsInEffect": m72,
+    "sectionsInEffect": m76,
     "selectAll": MessageLookupByLibrary.simpleMessage("全选"),
     "selectRuleSet": MessageLookupByLibrary.simpleMessage("请选择规则集"),
     "selectSplitStrategy": MessageLookupByLibrary.simpleMessage("请选择分流策略"),
     "selected": MessageLookupByLibrary.simpleMessage("已选择"),
     "server": MessageLookupByLibrary.simpleMessage("服务器"),
-    "serviceAbnormalCount": m73,
+    "serviceAbnormalCount": m77,
     "serviceAllAvailable": MessageLookupByLibrary.simpleMessage("全部可用"),
     "serviceAvailable": MessageLookupByLibrary.simpleMessage("可用"),
     "serviceBlocked": MessageLookupByLibrary.simpleMessage("已被封禁"),
     "serviceCheck": MessageLookupByLibrary.simpleMessage("检测"),
     "serviceCheckAll": MessageLookupByLibrary.simpleMessage("全部检测"),
-    "serviceCheckedAt": m74,
+    "serviceCheckedAt": m78,
     "serviceComingSoon": MessageLookupByLibrary.simpleMessage("即将上线"),
     "serviceDisallowedIsp": MessageLookupByLibrary.simpleMessage("不允许的 ISP"),
     "serviceFailed": MessageLookupByLibrary.simpleMessage("检测失败"),
@@ -1279,8 +1428,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "serviceUnsupportedRegion": MessageLookupByLibrary.simpleMessage("地区不支持"),
     "settingEntries": MessageLookupByLibrary.simpleMessage("设置项"),
     "settings": MessageLookupByLibrary.simpleMessage("设置"),
-    "settingsCount": m75,
-    "shareLinkUnreadable": m76,
+    "settingsCount": m79,
+    "shareLinkUnreadable": m80,
     "shareLinksInvalid": MessageLookupByLibrary.simpleMessage("无法从链接中读取代理"),
     "show": MessageLookupByLibrary.simpleMessage("显示"),
     "showLess": MessageLookupByLibrary.simpleMessage("收起"),
@@ -1298,7 +1447,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "singleShareLinkOnly": MessageLookupByLibrary.simpleMessage(
       "这里只能填写一条链接，多条请在列表的快速编辑中填写",
     ),
-    "singleValueTip": m77,
+    "singleValueTip": m81,
     "size": MessageLookupByLibrary.simpleMessage("尺寸"),
     "skipCertVerify": MessageLookupByLibrary.simpleMessage("跳过证书验证"),
     "skipDomain": MessageLookupByLibrary.simpleMessage("跳过域名"),
@@ -1382,8 +1531,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "totalUpload": MessageLookupByLibrary.simpleMessage("上传总量"),
     "tproxyPort": MessageLookupByLibrary.simpleMessage("Tproxy端口"),
     "traffic": MessageLookupByLibrary.simpleMessage("流量"),
-    "trafficPeak": m78,
-    "trafficTotal": m79,
+    "trafficPeak": m82,
+    "trafficTotal": m83,
     "trafficUsage": MessageLookupByLibrary.simpleMessage("流量统计"),
     "transport": MessageLookupByLibrary.simpleMessage("传输协议"),
     "tun": MessageLookupByLibrary.simpleMessage("虚拟网卡"),
@@ -1413,7 +1562,7 @@ class MessageLookup extends MessageLookupByLibrary {
     "upload": MessageLookupByLibrary.simpleMessage("上传"),
     "uploadBandwidth": MessageLookupByLibrary.simpleMessage("上行带宽"),
     "url": MessageLookupByLibrary.simpleMessage("URL"),
-    "urlTip": m80,
+    "urlTip": m84,
     "useHosts": MessageLookupByLibrary.simpleMessage("使用Hosts"),
     "useSystemHosts": MessageLookupByLibrary.simpleMessage("使用系统Hosts"),
     "usedShort": MessageLookupByLibrary.simpleMessage("已用"),
@@ -1436,8 +1585,8 @@ class MessageLookup extends MessageLookupByLibrary {
     "writeToSystemDesc": MessageLookupByLibrary.simpleMessage(
       "写入系统会同时设置系统时钟，Android 上不生效。",
     ),
-    "yearsAgo": m81,
-    "yearsAgoShort": m82,
+    "yearsAgo": m85,
+    "yearsAgoShort": m86,
     "yes": MessageLookupByLibrary.simpleMessage("是"),
     "zhCN": MessageLookupByLibrary.simpleMessage("中文简体"),
   };
