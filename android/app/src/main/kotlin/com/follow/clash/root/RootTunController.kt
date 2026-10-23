@@ -42,6 +42,9 @@ internal class RootTunController(
 
     @Volatile private var desiredRunning = false
     private var monitorStarted = false
+
+    @Volatile private var authorizationMonitorStarted = false
+    private var authorizationChannel: RootAuthorizationChannel? = null
     private var lastRuntimeEvent = ""
     private var lastPrivateDnsMode: String? = null
 
@@ -60,7 +63,12 @@ internal class RootTunController(
         )
         private set
 
-    private var runtimeMayExist = snapshot.rootTunEnabled && snapshot.stale
+    @Volatile private var runtimeMayExist = snapshot.rootTunEnabled && snapshot.stale
+    private var authorizationWasGranted = snapshot.authStatus in setOf("granted", "revoked")
+
+    @Synchronized
+    private fun authChannel(): RootAuthorizationChannel =
+        authorizationChannel ?: RootAuthorizationChannel(context.filesDir).also { authorizationChannel = it }
 
     val selected: Boolean get() = snapshot.mode == "rootTun"
     val runningRequested: Boolean get() = desiredRunning
@@ -288,6 +296,12 @@ internal class RootTunController(
         revision: Long,
         requestId: String,
     ) {
+        if (retryRevoked(snapshot)) {
+            desiredRunning = true
+            report(revision, snapshot.copy(lastErrorCode = null, lastErrorAt = null), requestId = requestId)
+            authorizeAndStart(revision, requestId)
+            return
+        }
         val root = detection.detect(Build.VERSION.SDK_INT, snapshot.authStatus)
         if (!current(revision)) return
         if (snapshot.stale || (runtimeMayExist && !desiredRunning)) {
@@ -305,16 +319,11 @@ internal class RootTunController(
             report(revision, snapshot.copy(rootManager = root.manager, authStatus = root.auth), requestId = requestId)
             if (snapshot.state != TunState.RUNNING || snapshot.stale) start(revision, requestId)
         } else {
-            val state =
-                when {
-                    root.auth != "granted" && desiredRunning -> TunState.AWAITING_AUTH
-                    snapshot.state == TunState.DEGRADED || snapshot.state == TunState.AWAITING_AUTH -> TunState.DISABLED
-                    else -> snapshot.state
-                }
+            val rechecked = recheckedAuth(snapshot, root, desiredRunning)
             report(
                 revision,
-                snapshot.copy(state = state, rootManager = root.manager, authStatus = root.auth, stale = false),
-                if (state == TunState.AWAITING_AUTH) RootCode.ROOT_GRANT_NOT_DETECTED else null,
+                rechecked,
+                if (rechecked.state == TunState.AWAITING_AUTH) RootCode.ROOT_GRANT_NOT_DETECTED else null,
                 requestId,
             )
         }
@@ -326,7 +335,12 @@ internal class RootTunController(
         requestId: String? = null,
     ) {
         val status =
-            if (root.auth ==
+            if (root.manager == "magisk") {
+                monitoredStatus(root.manager, authChannel().runtimeStatus) { runtime.status() } ?: run {
+                    startMonitor()
+                    return
+                }
+            } else if (root.auth ==
                 "granted"
             ) {
                 runCatching { runtime.status() }.getOrDefault(ShellResult(1, "", "Status unavailable"))
@@ -334,7 +348,9 @@ internal class RootTunController(
                 null
             }
         var checked = RootReconciliation.checked(snapshot, root, status)
-        if (checked.state == TunState.RUNNING && !runCatching { runtime.attach() }.getOrDefault(false)) {
+        if (root.manager != "magisk" && checked.state == TunState.RUNNING &&
+            !runCatching { runtime.attach(root.manager, authChannel().configuration) }.getOrDefault(false)
+        ) {
             checked = checked.copy(state = TunState.STOPPING, lastErrorCode = RootCode.CLEANUP_FAILED.name)
         }
         synchronized(this) {
@@ -395,7 +411,10 @@ internal class RootTunController(
         if (!current(revision)) return
         startForegroundService()
         runtimeMayExist = true
-        runtime.start(selections()) { current(revision) && SystemClock.elapsedRealtime() < deadline }
+        authorizationWasGranted = true
+        runtime.start(selections(), snapshot.rootManager, { authChannel().beginSession() }) {
+            current(revision) && SystemClock.elapsedRealtime() < deadline
+        }
         if (runtime.didInstall && current(revision)) {
             synchronized(this) {
                 history.clear()
@@ -409,12 +428,16 @@ internal class RootTunController(
         }
         startMonitor()
         while (current(revision) && SystemClock.elapsedRealtime() < deadline) {
-            val status = runtime.status()
+            val status = monitoredStatus(snapshot.rootManager, authorizationChannel?.runtimeStatus) { runtime.status() }
+            if (status == null) {
+                delay(200)
+                continue
+            }
             if (status.stdout.startsWith("failed") || status.stdout.contains("CLEANUP_FAILED")) {
                 acceptStatus(status.stdout, requestId, revision)
                 return
             }
-            if (runtime.healthy()) {
+            if (runtime.healthy(status)) {
                 if (!RootHealth.dns()) {
                     val cleaned = runtime.stop()
                     if (current(revision)) {
@@ -431,6 +454,7 @@ internal class RootTunController(
                     revision,
                     snapshot.copy(
                         state = TunState.RUNNING,
+                        warnings = snapshot.warnings.filterNot { it == RootCode.CLEANUP_FAILED.name },
                         startedAt = System.currentTimeMillis(),
                         autostartEnabled =
                             "autostart:yes" in status.stdout,
@@ -476,7 +500,9 @@ internal class RootTunController(
             report(revision, snapshot.copy(state = TunState.STOPPING), RootCode.CLEANUP_FAILED, requestId)
             return
         }
-        if (disable || force) runtimeMayExist = false
+        if (disable || force) {
+            runtimeMayExist = false
+        }
         report(
             revision,
             snapshot.copy(
@@ -499,11 +525,17 @@ internal class RootTunController(
             ),
             requestId = requestId,
         )
+        if (disable || force) {
+            authorizationWasGranted = false
+            authorizationChannel?.close()
+            authorizationChannel = null
+        }
         RootTunService.stop(context)
     }
 
     @Synchronized
     private fun startMonitor() {
+        startAuthorizationMonitor()
         if (monitorStarted) return
         monitorStarted = true
         scope.launch {
@@ -511,9 +543,15 @@ internal class RootTunController(
                 while (true) {
                     delay(1_000)
                     operations.withLock {
-                        if (!selected || (!desiredRunning && snapshot.state != TunState.STOPPING)) return@withLock
+                        if (!selected || (!desiredRunning && snapshot.state != TunState.STOPPING && !snapshot.stale)) return@withLock
                         val revision = snapshot.intentRevision
-                        val status = runtime.status()
+                        if (snapshot.stale && snapshot.rootManager == "magisk") {
+                            reconcile(revision, RootStatus(snapshot.rootManager, snapshot.authStatus))
+                            return@withLock
+                        }
+                        val status =
+                            monitoredStatus(snapshot.rootManager, authorizationChannel?.runtimeStatus) { runtime.status() }
+                                ?: return@withLock
                         if (!current(revision)) return@withLock
                         acceptStatus(status.stdout, revision = revision)
                         if (!status.success && status.stdout.isBlank()) {
@@ -527,6 +565,58 @@ internal class RootTunController(
                 }
             } finally {
                 monitorStarted = false
+            }
+        }
+    }
+
+    @Synchronized
+    private fun startAuthorizationMonitor() {
+        if (authorizationMonitorStarted || !authorizationWasGranted) return
+        authorizationMonitorStarted = true
+        scope.launch {
+            val probe = RootShell()
+            var authorization = RootAuthorization()
+            var observedRevision = -1L
+            try {
+                while (snapshot.rootTunEnabled) {
+                    val revision = snapshot.intentRevision
+                    if (revision != observedRevision) {
+                        authorization = RootAuthorization()
+                        observedRevision = revision
+                    }
+                    val channel = authChannel()
+                    val verdict =
+                        if (authorizationProbeAllowed(snapshot, runtimeMayExist)) {
+                            authorization.probe(SystemClock.elapsedRealtime()) { probe.root("id -u", 1_000) }
+                        } else {
+                            "unknown"
+                        }
+                    if (!current(revision) || !snapshot.rootTunEnabled) continue
+                    channel.verdict = verdict
+                    val completed = channel.cleanupCode
+                    if (completed != null) {
+                        operations.withLock {
+                            if (!current(revision) || !snapshot.rootTunEnabled) return@withLock
+                            desiredRunning = false
+                            publish(
+                                snapshot.copy(
+                                    state = TunState.FAILED,
+                                    authStatus = "revoked",
+                                    autostartEnabled = false,
+                                    stale = false,
+                                    warnings = emptyList(),
+                                    startedAt = null,
+                                    authDeadlineAt = null,
+                                ),
+                                completed,
+                            )
+                        }
+                        return@launch
+                    }
+                    delay(2_000)
+                }
+            } finally {
+                authorizationMonitorStarted = false
             }
         }
     }
@@ -564,6 +654,7 @@ internal class RootTunController(
                 stale = false,
                 warnings = warnings,
                 autostartEnabled = "autostart:yes" in raw,
+                authStatus = if ("auth:revoked" in raw) "revoked" else snapshot.authStatus,
                 lastErrorCode = if (code == RootCode.CORE_RECOVERED) null else snapshot.lastErrorCode,
                 lastErrorAt = if (code == RootCode.CORE_RECOVERED) null else snapshot.lastErrorAt,
             )
@@ -687,6 +778,7 @@ internal class RootTunController(
     }
 
     init {
+        if (!BuildConfig.ROOT_TUN_SAFE_MODE) startAuthorizationMonitor()
         if (snapshot.stale && !BuildConfig.ROOT_TUN_SAFE_MODE) {
             val revision = snapshot.intentRevision
             scope.launch {
@@ -700,6 +792,38 @@ internal class RootTunController(
     }
 
     companion object {
+        internal fun monitoredStatus(
+            manager: String,
+            pushedStatus: String?,
+            query: () -> ShellResult,
+        ): ShellResult? = if (manager == "magisk") pushedStatus?.let { ShellResult(0, it, "") } else query()
+
+        internal fun authorizationProbeAllowed(
+            current: RootSnapshot,
+            runtimeMayExist: Boolean,
+        ): Boolean =
+            current.rootManager != "magisk" && runtimeMayExist && current.rootTunEnabled &&
+                current.authStatus != "revoked" &&
+                current.state in setOf(TunState.STARTING, TunState.RUNNING, TunState.RECOVERING, TunState.STOPPING)
+
+        internal fun retryRevoked(previous: RootSnapshot): Boolean =
+            previous.rootTunEnabled && previous.authStatus == "revoked" &&
+                previous.lastErrorCode in setOf(RootCode.ROOT_PERMISSION_REVOKED.name, RootCode.AUTOSTART_ROOT_REVOKED.name)
+
+        internal fun recheckedAuth(
+            previous: RootSnapshot,
+            root: RootStatus,
+            desiredRunning: Boolean,
+        ): RootSnapshot {
+            val state =
+                when {
+                    root.auth != "granted" && desiredRunning -> TunState.AWAITING_AUTH
+                    previous.state == TunState.DEGRADED || previous.state == TunState.AWAITING_AUTH -> TunState.DISABLED
+                    else -> previous.state
+                }
+            return previous.copy(state = state, rootManager = root.manager, authStatus = root.auth, stale = false)
+        }
+
         private val STOP_REASONS = setOf("proxyStop", "disable", "switchToVpn", "cancelAuth", "acknowledgeFailure")
         private val PREREQUISITES = setOf(RootCode.ROOT_NOT_FOUND, RootCode.ROOT_MANAGER_UNSUPPORTED, RootCode.ANDROID_VERSION_UNSUPPORTED)
         private val INFORMATION =

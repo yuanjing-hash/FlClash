@@ -19,6 +19,9 @@ internal class RootRuntime(
     private var controllerPort = 0
     private var controllerToken = ""
     private var stagedBytes = 0L
+    private val ownEntry =
+        "[ ! -L /data/adb/service.d ] && [ ! -L $AUTOSTART ] && [ -f $AUTOSTART ] && " +
+            "grep -qx '# flclash-root service.d v[12]' $AUTOSTART"
     var didInstall: Boolean = false
         private set
 
@@ -28,10 +31,13 @@ internal class RootRuntime(
                 "elif [ ! -L $BASE/scripts/runtime.sh ] && [ -f $BASE/scripts/runtime.sh ]; then " +
                 "/system/bin/sh $BASE/scripts/runtime.sh status; " +
                 "else echo 'stopping CLEANUP_FAILED'; false; fi; result=\$?; " +
-                "if [ -f $AUTOSTART ]; then echo autostart:yes; else echo autostart:no; fi; exit \$result",
+                "if $ownEntry; then echo autostart:yes; else echo autostart:no; fi; exit \$result",
         )
 
-    fun attach(): Boolean {
+    fun attach(
+        manager: String? = null,
+        authChannel: String? = null,
+    ): Boolean {
         val existing = status()
         if (!existing.success || !existing.stdout.startsWith("running")) return false
         val credentials = shell.root("cat $BASE/config/controller.port $BASE/config/health.http")
@@ -43,20 +49,28 @@ internal class RootRuntime(
                 ?.removePrefix("Authorization: Bearer ")
                 ?.trim()
                 .orEmpty()
-        return apiHealthy()
+        if (!apiHealthy()) return false
+        installScripts()
+        if (manager != null && authChannel != null) configureAuthorization(manager, authChannel)
+        check(command("start").success)
+        if (autostartEnabled()) check(setAutostart(true))
+        return true
     }
 
     fun start(
         selections: Map<String, String>,
+        manager: String,
+        authChannel: () -> String,
         allowed: () -> Boolean,
     ) {
         didInstall = false
-        if (attach()) return
+        if (attach(manager, authChannel())) return
         check(stop()) { "Previous root runtime could not be cleaned" }
         check(allowed()) { "Start superseded or expired" }
         stagedBytes = 0
         install()
         didInstall = true
+        configureAuthorization(manager, authChannel())
         val profile = File(context.filesDir, "config.yaml")
         check(profile.isFile && profile.length() in 1..MAX_CONFIG) { "Active config.yaml is missing or too large" }
         val options =
@@ -153,6 +167,7 @@ internal class RootRuntime(
         check(validation.success) { "Mihomo config validation failed; see validation.log" }
         if (!allowed()) return
         write("config/root-tun-enabled", "1\n".toByteArray())
+        check(command("settings").success) { "Root settings could not be persisted" }
         check(command("start").success) { "Root supervisor failed to start" }
     }
 
@@ -166,6 +181,7 @@ internal class RootRuntime(
             ).success
 
     fun delete(): Boolean {
+        if (!command("cleanup", 4_000).success) return false
         val retained =
             shell.root(
                 "for f in core.log validation.log watchdog.log transitions.log boot.log; do echo \"[\$f]\"; tail -c 131072 $BASE/logs/\$f 2>/dev/null; done",
@@ -187,21 +203,18 @@ internal class RootRuntime(
     }
 
     fun autostartEnabled(): Boolean {
-        val result = shell.root("if [ -f $AUTOSTART ]; then echo yes; else echo no; fi")
+        val result = shell.root("if $ownEntry; then echo yes; else echo no; fi")
         check(result.success) { "Autostart state is unavailable" }
         return result.stdout.trim() == "yes"
     }
 
     fun setAutostart(enabled: Boolean): Boolean {
-        val ownEntry =
-            "[ ! -L /data/adb/service.d ] && [ ! -L $AUTOSTART ] && " +
-                "{ [ ! -e $AUTOSTART ] || { [ -f $AUTOSTART ] && " +
-                "grep -qx '# flclash-root service.d v1' $AUTOSTART; }; }"
         val result =
             if (enabled) {
                 val entry = context.assets.open("root-tun/service.d.sh").use { it.readBytes() }
                 shell.root(
-                    "umask 077; $ownEntry && [ ! -L $BASE ] && [ -d $BASE/config ] && " +
+                    "umask 077; [ ! -L /data/adb/service.d ] && [ ! -L $AUTOSTART ] && " +
+                        "{ [ ! -e $AUTOSTART ] || { $ownEntry; }; } && [ ! -L $BASE ] && [ -d $BASE/config ] && " +
                         "[ -z \"\$(find $BASE -type l -print)\" ] && " +
                         "[ -s $BASE/config/config.yaml ] && [ -f $BASE/scripts/runtime.sh ] && " +
                         "[ \"\$(cat $BASE/config/root-tun-enabled)\" = 1 ] && " +
@@ -209,18 +222,19 @@ internal class RootRuntime(
                         "chmod 700 $BASE/tmp/autostart-entry && chown 0:0 $BASE/tmp/autostart-entry && " +
                         "echo 1 >$BASE/config/autostart-enabled.tmp && chmod 600 $BASE/config/autostart-enabled.tmp && " +
                         "mv $BASE/config/autostart-enabled.tmp $BASE/config/autostart-enabled && " +
-                        "mv $BASE/tmp/autostart-entry $AUTOSTART",
-                    2_500,
+                        "mv $BASE/tmp/autostart-entry $AUTOSTART && /system/bin/sh $BASE/scripts/runtime.sh settings",
+                    2_300,
                     entry,
                 )
             } else {
                 shell.root(
-                    "$ownEntry && rm -f $AUTOSTART && " +
+                    "if $ownEntry; then rm -f $AUTOSTART || exit 1; fi; " +
                         "if [ -d $BASE/config ]; then [ ! -L $BASE ] && " +
                         "[ -z \"\$(find $BASE -type l -print)\" ] && " +
                         "echo 0 >$BASE/config/autostart-enabled.tmp && chmod 600 $BASE/config/autostart-enabled.tmp && " +
-                        "mv $BASE/config/autostart-enabled.tmp $BASE/config/autostart-enabled; fi",
-                    2_500,
+                        "mv $BASE/config/autostart-enabled.tmp $BASE/config/autostart-enabled && " +
+                        "/system/bin/sh $BASE/scripts/runtime.sh settings; fi",
+                    2_300,
                 )
             }
         return result.success
@@ -228,8 +242,8 @@ internal class RootRuntime(
 
     fun restoreDiffExists(): Boolean = shell.root("[ -s $BASE/logs/restore-diff.txt ]").success
 
-    fun healthy(): Boolean {
-        if (!status().success) return false
+    fun healthy(status: ShellResult = status()): Boolean {
+        if (!status.success) return false
         return apiHealthy()
     }
 
@@ -277,7 +291,22 @@ internal class RootRuntime(
         check(setup.success) { "Unsafe or inaccessible runtime directory" }
         copyAsset(library, "$BASE/bin/mihomo.next")
         check(shell.root("chmod 700 $BASE/bin/mihomo.next && mv $BASE/bin/mihomo.next $BASE/bin/mihomo").success)
-        write("scripts/runtime.sh", context.assets.open("root-tun/runtime.sh").use { it.readBytes() })
+        installScripts()
+    }
+
+    private fun installScripts() {
+        for (name in listOf("authorization.sh", "runtime.sh")) {
+            write("scripts/$name", context.assets.open("root-tun/$name").use { it.readBytes() })
+        }
+    }
+
+    private fun configureAuthorization(
+        manager: String,
+        authChannel: String,
+    ) {
+        write("config/app.uid", "${context.applicationInfo.uid}\n".toByteArray())
+        write("config/root.manager", "$manager\n".toByteArray())
+        write("config/app-auth", authChannel.toByteArray())
     }
 
     private fun stagePaths(node: MutableMap<String, Any?>) {

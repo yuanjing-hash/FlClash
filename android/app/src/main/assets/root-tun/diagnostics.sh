@@ -38,8 +38,8 @@ collect Addresses ip addr show
 collect iptables iptables-save
 collect ip6tables ip6tables-save
 collect 'VPN connectivity' sh -c 'dumpsys connectivity | grep -i -E "vpn|TRANSPORT_VPN|lockdown"'
-collect 'Root state' sh -c 'cat /data/adb/flclash-root/state/status /data/adb/flclash-root/state/private-dns /data/adb/flclash-root/run/*.pid'
-for name in core.log core.log.1 validation.log watchdog.log transitions.log boot.log; do
+collect 'Root state' sh -c 'cat /data/adb/flclash-root/state/status /data/adb/flclash-root/state/private-dns /data/adb/flclash-root/state/auth-status /data/adb/flclash-root/state/owned.boot /data/adb/flclash-root/run/*.pid /data/adb/flclash-root/run/*.heartbeat /data/adb/flclash-root/run/generation /data/adb/flclash-root/run/boot-id'
+for name in core.log core.log.1 validation.log watchdog.log watchdog.log.1 supervisor.log supervisor.log.1 transitions.log boot.log boot.log.1; do
     collect "$name" tail -c 131072 "$R/logs/$name"
 done
 collect Baseline sh -c 'cat /data/adb/flclash-root/state/baseline.*'
