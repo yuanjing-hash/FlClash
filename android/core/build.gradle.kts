@@ -33,10 +33,11 @@ kotlin {
 }
 
 val gomobileTargetByPlatform =
-    linkedMapOf("android-arm" to "android/arm", "android-arm64" to "android/arm64", "android-x64" to "android/amd64")
+    linkedMapOf("android-arm64" to "android/arm64", "android-x64" to "android/amd64")
 val gomobileTargets =
     (rootProject.findProperty("target-platform") as String?)
         ?.split(",")
+        ?.filter { it.trim() != "android-arm" }
         ?.map { gomobileTargetByPlatform[it.trim()] ?: throw GradleException("No Core for Flutter target platform $it") }
         ?: gomobileTargetByPlatform.values.toList()
 

@@ -115,18 +115,25 @@ android {
 
 androidComponents {
     finalizeDsl { dsl ->
+        val platforms = providers.gradleProperty("target-platform").orNull?.split(",")
+        val rootAbis =
+            listOfNotNull(
+                "arm64-v8a".takeIf { platforms == null || "android-arm64" in platforms },
+                "x86_64".takeIf { platforms == null || "android-x64" in platforms },
+            )
         if (dsl.splits.abi.isEnable) {
             dsl.defaultConfig.ndk.abiFilters
                 .clear()
-            dsl.splits.abi.exclude("armeabi-v7a")
+            dsl.splits.abi.reset()
+            dsl.splits.abi.include(*rootAbis.toTypedArray())
         } else {
             dsl.defaultConfig.ndk.abiFilters
-                .remove("armeabi-v7a")
+                .retainAll(rootAbis)
             if (dsl.defaultConfig.ndk.abiFilters
                     .isEmpty()
             ) {
                 dsl.defaultConfig.ndk.abiFilters
-                    .addAll(listOf("arm64-v8a", "x86_64"))
+                    .addAll(rootAbis)
             }
         }
     }
