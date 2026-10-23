@@ -413,7 +413,8 @@ jobs:
       - name: Build APKs
         env:
           ANDROID_NDK_HOME: ${{ steps.build-ndk.outputs.ndk-path }}
-        run: dart setup.dart android ${{ env.IS_STABLE == 'true' && '--env stable' || '' }} -v
+        # armeabi-v7a is not shipped; Root TUN targets 64-bit devices.
+        run: dart setup.dart android --arch arm64,amd64 ${{ env.IS_STABLE == 'true' && '--env stable' || '' }} -v
 
       - name: Clean Android signing files
         if: always()
@@ -426,7 +427,7 @@ jobs:
           mkdir -p apks
           find dist -type f -name '*.apk' -exec cp -t apks {} +
           version=$(sed -n 's/^version: \([^+]*\)+.*/\1/p' pubspec.yaml)
-          for abi in arm64-v8a armeabi-v7a x86_64; do
+          for abi in arm64-v8a x86_64; do
             test -f "apks/FlClash-$version-android-$abi.apk"
           done
           if [[ "$SIGNED" != true ]]; then
