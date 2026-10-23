@@ -1,4 +1,5 @@
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import java.util.Base64
 import java.util.Properties
 
 plugins {
@@ -6,25 +7,30 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-val localProperties = Properties().apply {
-    val localPropertiesFile = rootProject.file("local.properties")
-    if (localPropertiesFile.exists()) {
-        localPropertiesFile.inputStream().use { load(it) }
+val localProperties =
+    Properties().apply {
+        val localPropertiesFile = rootProject.file("local.properties")
+        if (localPropertiesFile.exists()) {
+            localPropertiesFile.inputStream().use { load(it) }
+        }
     }
-}
 
 val releaseStoreFile = file("keystore.jks")
 val releaseStorePassword = localProperties.getProperty("storePassword")
 val releaseKeyAlias = localProperties.getProperty("keyAlias")
 val releaseKeyPassword = localProperties.getProperty("keyPassword")
-val hasReleaseSigning = releaseStoreFile.exists() &&
-    releaseStorePassword != null &&
-    releaseKeyAlias != null &&
-    releaseKeyPassword != null
+val hasReleaseSigning =
+    releaseStoreFile.exists() &&
+        releaseStorePassword != null &&
+        releaseKeyAlias != null &&
+        releaseKeyPassword != null
 
 android {
     namespace = "com.follow.clash"
-    compileSdk = libs.versions.compileSdk.get().toInt()
+    compileSdk =
+        libs.versions.compileSdk
+            .get()
+            .toInt()
     ndkVersion = libs.versions.ndkVersion.get()
 
     compileOptions {
@@ -33,11 +39,29 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.follow.clash"
+        applicationId = "com.follow.clash.root"
         minSdk = flutter.minSdkVersion
-        targetSdk = libs.versions.targetSdk.get().toInt()
+        targetSdk =
+            libs.versions.targetSdk
+                .get()
+                .toInt()
         versionCode = flutter.versionCode
         versionName = flutter.versionName
+        val dartDefines =
+            providers
+                .gradleProperty("dart-defines")
+                .orNull
+                .orEmpty()
+                .split(",")
+        val safeMode =
+            dartDefines.any {
+                runCatching {
+                    String(
+                        Base64.getDecoder().decode(it),
+                    ) == "SAFE_MODE=true"
+                }.getOrDefault(false)
+            }
+        buildConfigField("boolean", "ROOT_TUN_SAFE_MODE", safeMode.toString())
     }
 
     signingConfigs {
@@ -54,13 +78,13 @@ android {
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            keepDebugSymbols.add("**/libroot_mihomo.so")
         }
     }
 
     buildTypes {
         debug {
             isMinifyEnabled = false
-            applicationIdSuffix = ".dev"
         }
 
         release {
@@ -70,7 +94,6 @@ android {
                 signingConfig = signingConfigs.getByName("release")
             } else {
                 signingConfig = signingConfigs.getByName("debug")
-                applicationIdSuffix = ".dev"
             }
 
             proguardFiles(
@@ -83,6 +106,29 @@ android {
     sourceSets {
         // Unit tests live under android/tests/ instead of each module's src/test.
         getByName("test").java.setSrcDirs(listOf("../tests/app"))
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+}
+
+androidComponents {
+    finalizeDsl { dsl ->
+        if (dsl.splits.abi.isEnable) {
+            dsl.defaultConfig.ndk.abiFilters
+                .clear()
+            dsl.splits.abi.exclude("armeabi-v7a")
+        } else {
+            dsl.defaultConfig.ndk.abiFilters
+                .remove("armeabi-v7a")
+            if (dsl.defaultConfig.ndk.abiFilters
+                    .isEmpty()
+            ) {
+                dsl.defaultConfig.ndk.abiFilters
+                    .addAll(listOf("arm64-v8a", "x86_64"))
+            }
+        }
     }
 }
 
@@ -97,6 +143,8 @@ flutter {
 }
 
 dependencies {
+    implementation(project(":root-tun"))
+    implementation("org.yaml:snakeyaml:2.3")
     implementation(project(":service"))
     implementation(project(":common"))
     implementation(project(":core"))
