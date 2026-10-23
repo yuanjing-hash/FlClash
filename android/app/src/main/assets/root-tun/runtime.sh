@@ -7,6 +7,7 @@ export PATH=/system/bin:/system/xbin:/vendor/bin:/data/adb/ksu/bin:/data/adb/ap/
 CORE=$R/bin/mihomo
 STATE=$R/state
 RUN=$R/run
+BOOT=$(cat /proc/sys/kernel/random/boot_id)
 
 safe_tree() {
     [ ! -L "$R" ] || return 1
@@ -23,12 +24,101 @@ ticks() {
 alive() {
     [ -f "$1" ] || return 1
     read -r recorded_pid recorded_ticks recorded_boot < "$1"
-    [ "$recorded_boot" = "$(cat /proc/sys/kernel/random/boot_id)" ] || return 1
+    [ "$recorded_boot" = "$BOOT" ] || return 1
     case "$recorded_pid:$recorded_ticks" in *[!0-9:]*|:|*:) return 1 ;; esac
-    [ "$recorded_pid" -gt 1 ] && [ "$(ticks "$recorded_pid")" = "$recorded_ticks" ]
+    [ "$recorded_pid" -gt 1 ] && [ "$(ticks "$recorded_pid")" = "$recorded_ticks" ] &&
+        [ "$(sed 's/.*) //' "/proc/$recorded_pid/stat" 2>/dev/null | cut -d' ' -f1)" != Z ]
+}
+
+boot_seconds() {
+    cut -d. -f1 /proc/uptime
+}
+
+lock() {
+    lock_path=$RUN/$1.lock
+    [ ! -d "$lock_path" ] || return 1
+    candidate=$RUN/$1.candidate.$$
+    printf '%s\n' "$IDENTITY" > "$candidate"
+    if ! ln "$candidate" "$lock_path" 2>/dev/null; then
+        if alive "$lock_path"; then rm -f "$candidate"; return 1; fi
+        stale_identity=$(cat "$lock_path" 2>/dev/null)
+        if [ "$stale_identity" != "$(cat "$lock_path" 2>/dev/null)" ] || alive "$lock_path"; then
+            rm -f "$candidate"
+            return 1
+        fi
+        rm -f "$lock_path"
+        if ! ln "$candidate" "$lock_path" 2>/dev/null; then rm -f "$candidate"; return 1; fi
+    fi
+    rm -f "$candidate"
+}
+
+wait_control() {
+    for _lock_attempt in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        lock control && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
+unlock() {
+    [ "$(cat "$RUN/$1.lock" 2>/dev/null)" = "$IDENTITY" ] || return 0
+    rm -f "$RUN/$1.lock"
+}
+
+owns() {
+    [ "$(cat "$RUN/owner.lock" 2>/dev/null)" = "$IDENTITY" ] &&
+        [ "${generation:-}" = "$(cat "$RUN/generation" 2>/dev/null)" ]
+}
+
+claim_owner() {
+    lock owner || return 1
+    generation=$(cat "$RUN/generation" 2>/dev/null) || generation=0
+    case "$generation" in ''|*[!0-9]*) generation=0 ;; esac
+    generation=$((generation + 1))
+    printf '%s\n' "$generation" > "$RUN/generation.tmp"
+    mv "$RUN/generation.tmp" "$RUN/generation"
+}
+
+rotate_log() {
+    if [ -f "$R/logs/$1.log" ] && [ "$(stat -c %s "$R/logs/$1.log")" -ge 1048576 ]; then
+        mv "$R/logs/$1.log" "$R/logs/$1.log.1"
+    fi
+}
+
+runtime_log() {
+    rotate_log "$1"
+    printf '%s %s\n' "$(boot_seconds)" "$2" >> "$R/logs/$1.log"
+}
+
+heartbeat() {
+    printf '{"schemaVersion":1,"pid":%s,"startTicks":%s,"bootId":"%s","bootMs":%s000,"sessionId":"%s"}\n' \
+        "$$" "$(ticks "$$")" "$BOOT" "$(boot_seconds)" "$generation" > "$RUN/$1.heartbeat.tmp"
+    mv "$RUN/$1.heartbeat.tmp" "$RUN/$1.heartbeat"
+}
+
+fresh() {
+    alive "$RUN/$1.pid" || return 1
+    beat=$(cat "$RUN/$1.heartbeat" 2>/dev/null) || return 1
+    case "$beat" in *\"pid\":$recorded_pid,\"startTicks\":$recorded_ticks,\"bootId\":\"$BOOT\"*) ;; *) return 1 ;; esac
+    beat_ms=$(printf '%s\n' "$beat" | sed -n 's/.*"bootMs":\([0-9]*\),.*/\1/p')
+    [ -n "$beat_ms" ] || return 1
+    beat_age=$(($(boot_seconds) - beat_ms / 1000))
+    [ "$beat_age" -ge 0 ] && [ "$beat_age" -le 2 ]
+}
+
+detach() {
+    nohup setsid /system/bin/sh "$R/scripts/runtime.sh" spawn "$@" </dev/null >/dev/null 2>&1 &
+}
+
+ensure_watchdog() {
+    fresh watchdog && return 0
+    if alive "$RUN/watchdog.pid"; then kill -KILL "$recorded_pid"; fi
+    detach watchdog
 }
 
 publish() {
+    owns || return 1
+    if [ "$1" = running ]; then : > "$R/logs/restore-diff.txt"; fi
     printf '%s %s\n' "$1" "${2:--}" > "$STATE/status.tmp"
     mv "$STATE/status.tmp" "$STATE/status"
     printf '%s %s %s\n' "$(date +%s)" "$1" "${2:--}" >> "$R/logs/transitions.log"
@@ -73,7 +163,9 @@ baseline() {
 
 normalize() {
     sed -E '/^[[:space:]]*#/d; s/\[[0-9]+:[0-9]+\]/[0:0]/g; s/ -c [0-9]+ [0-9]+//g;
-        s/ -m comment//g; s/ --comment "([^"\\]|\\.)*"//g; s/ --comment [^[:space:]]+//g' "$1"
+        s/ -m comment//g; s/ --comment "([^"\\]|\\.)*"//g; s/ --comment [^[:space:]]+//g;
+        s/ expires [0-9]+(sec|msec|ms|s)?//g; s/ age [0-9]+(sec|msec|ms|s)?//g;
+        s/ used [0-9]+//g; s/ proto (ra|kernel)( |$)/\2/g' "$1"
 }
 
 compare_restoration() {
@@ -119,9 +211,11 @@ compare_restoration() {
 }
 
 install_rules() {
+    owns || return 1
     vacant || return 1
     baseline || return 1
     # The reservation is written before any network mutation; rollback only touches this namespace.
+    printf '%s\n' "$BOOT" > "$STATE/owned.boot"
     printf '%s\n' 'rules:8990-9011 table:2022 link:flcrtun0 chains:FCR_OUTPUT' > "$STATE/owned"
     sync
     ip -4 rule add pref 8990 fwmark 0x40000000/0x40000000 goto 9011 || return 1
@@ -132,6 +226,7 @@ install_rules() {
     for protocol in udp tcp; do
         iptables -w 1 -A FCR_OUTPUT ! -o flcrtun0 -p "$protocol" --dport 53 -j REJECT || return 1
     done
+    iptables -w 1 -A FCR_OUTPUT ! -o flcrtun0 -j REJECT || return 1
     iptables -w 1 -I OUTPUT 1 -j FCR_OUTPUT || return 1
     ip6tables -w 1 -N FCR_OUTPUT || return 1
     ip6tables -w 1 -A FCR_OUTPUT -o lo -j RETURN || return 1
@@ -175,10 +270,20 @@ stop_core() {
 }
 
 cleanup() {
+    owns || return 1
+    if [ -f "$STATE/owned" ] && [ "$(cat "$STATE/owned.boot" 2>/dev/null)" != "$BOOT" ]; then
+        if [ ! -f "$STATE/owned.boot" ] && alive "$RUN/core.pid"; then
+            printf '%s\n' "$BOOT" > "$STATE/owned.boot"
+        else
+            vacant || return 1
+            rm -f "$STATE/owned" "$STATE/owned.boot"
+        fi
+    fi
     stop_core || return 1
     if [ ! -f "$STATE/owned" ]; then
         vacant || return 1
-        if [ -f "$STATE/baseline.iptables" ]; then compare_restoration; fi
+        if [ -f "$STATE/baseline.iptables" ]; then compare_restoration
+        else : > "$R/logs/restore-diff.txt"; fi
         return $?
     fi
     cleanup_ok=1
@@ -205,10 +310,11 @@ cleanup() {
     vacant || cleanup_ok=0
     [ "$cleanup_ok" -eq 1 ] || return 1
     compare_restoration || return 1
-    rm -f "$STATE/owned"
+    rm -f "$STATE/owned" "$STATE/owned.boot"
 }
 
 launch_core() {
+    owns && [ ! -f "$RUN/stop" ] || return 1
     if [ -f "$R/logs/core.log" ] && [ "$(stat -c %s "$R/logs/core.log")" -gt 1048576 ]; then
         mv "$R/logs/core.log" "$R/logs/core.log.1"
     fi
@@ -219,32 +325,74 @@ launch_core() {
     printf '%s %s %s\n' "$core_pid" "$core_ticks" "$(cat /proc/sys/kernel/random/boot_id)" > "$RUN/core.pid"
 }
 
-boot_seconds() {
-    cut -d. -f1 /proc/uptime
+core_healthy() {
+    alive "$RUN/core.pid" || return 1
+    ip link show flcrtun0 2>/dev/null | grep -q UP || return 1
+    port=$(cat "$R/config/controller.port")
+    timeout -s KILL 1 nc -w 1 127.0.0.1 "$port" < "$R/config/health.http" 2>/dev/null | head -n 1 | grep -q ' 200 ' || return 1
+}
+
+network_intact() {
+    ip -4 route show table 2022 | grep -q flcrtun0 &&
+        iptables -w 1 -C OUTPUT -j FCR_OUTPUT && ip6tables -w 1 -C OUTPUT -j FCR_OUTPUT
 }
 
 supervise() {
-    if ! mkdir "$RUN/owner.lock" 2>/dev/null; then
-        alive "$RUN/supervisor.pid" && return 1
-        rmdir "$RUN/owner.lock" || return 1
-        mkdir "$RUN/owner.lock" || return 1
+    claim_owner || return 1
+    if [ -f "$RUN/stop" ]; then unlock owner; return 0; fi
+    if [ "${1:-}" = adopt ]; then publish recovering CORE_CRASHED_RECOVERING; else publish starting; fi
+    printf '%s\n' "$IDENTITY" > "$RUN/supervisor.pid"
+    heartbeat supervisor
+    ensure_watchdog
+    for _ready_attempt in 1 2 3 4 5 6 7 8 9 10; do
+        fresh watchdog && break
+        sleep 0.1
+    done
+    if ! fresh watchdog; then
+        publish stopping CORE_RECOVERY_FAILED
+        if cleanup; then publish failed CORE_RECOVERY_FAILED; else publish stopping CLEANUP_FAILED; fi
+        rm -f "$RUN/supervisor.pid" "$RUN/supervisor.heartbeat"
+        unlock owner
+        return 1
     fi
-    printf '%s %s %s\n' "$$" "$(ticks "$$")" "$(cat /proc/sys/kernel/random/boot_id)" > "$RUN/supervisor.pid"
     trap 'touch "$RUN/stop"' TERM INT HUP
-    rm -f "$RUN/stop" "$RUN/healthy"
-    publish starting
-    if [ ! -c /dev/net/tun ]; then
+    rm -f "$RUN/healthy"
+    if [ "${1:-}" = adopt ] && core_healthy && network_intact; then
+        [ -f "$STATE/owned.boot" ] || printf '%s\n' "$BOOT" > "$STATE/owned.boot"
+        if ! iptables -w 1 -C FCR_OUTPUT ! -o flcrtun0 -j REJECT; then
+            if ! iptables -w 1 -A FCR_OUTPUT ! -o flcrtun0 -j REJECT; then
+                publish stopping CORE_RECOVERY_FAILED
+                if cleanup; then publish failed CORE_RECOVERY_FAILED; else publish stopping CLEANUP_FAILED; fi
+                unlock owner
+                return 1
+            fi
+        fi
+        publish running CORE_RECOVERED
+    elif [ "${1:-}" = adopt ]; then
+        publish stopping CORE_RECOVERY_FAILED
+        if cleanup; then publish failed CORE_RECOVERY_FAILED; else publish stopping CLEANUP_FAILED; fi
+        rm -f "$RUN/supervisor.pid" "$RUN/supervisor.heartbeat"
+        unlock owner
+        return 1
+    fi
+    if [ "${1:-}" != adopt ] && [ ! -c /dev/net/tun ]; then
         publish failed TUN_DEVICE_UNSUPPORTED
-    elif ! install_rules; then
+    elif [ "${1:-}" != adopt ] && ! install_rules; then
         publish stopping NETWORK_RULES_APPLY_FAILED
         if cleanup; then publish failed NETWORK_RULES_APPLY_FAILED; else publish stopping CLEANUP_FAILED; fi
-    elif ! launch_core; then
+    elif [ "${1:-}" != adopt ] && ! launch_core; then
         if cleanup; then publish failed CORE_START_FAILED; else publish stopping CLEANUP_FAILED; fi
     else
         deadline=$(($(boot_seconds) + 9))
         crash_times=''
+        if [ -f "$RUN/crash-times" ]; then
+            read -r crash_boot crash_times < "$RUN/crash-times"
+            [ "$crash_boot" = "$BOOT" ] || crash_times=''
+        fi
         final_code=''
-        while [ ! -f "$RUN/stop" ]; do
+        while owns && [ ! -f "$RUN/stop" ]; do
+            heartbeat supervisor
+            ensure_watchdog
             now=$(boot_seconds)
             if ! alive "$RUN/core.pid"; then
                 case "$(cat "$STATE/status")" in
@@ -264,33 +412,31 @@ supervise() {
                     fi
                 done
                 crash_times="$retained $now"
+                printf '%s %s\n' "$BOOT" "$crash_times" > "$RUN/crash-times.tmp"
+                mv "$RUN/crash-times.tmp" "$RUN/crash-times"
                 [ "$crash_count" -lt 3 ] || { final_code=CORE_CRASH_LOOP; break; }
                 publish recovering CORE_CRASHED_RECOVERING
                 rm -f "$RUN/healthy"
                 recovery_deadline=${recovery_deadline:-$((now + 26))}
                 stop_core
-                # TUN death removes its routes, but sing-tun leaves policy rules after SIGKILL.
-                if ! cleanup || ! install_rules || ! launch_core; then final_code=CORE_RECOVERY_FAILED; break; fi
+                runtime_log supervisor "recovery begin bootSeconds=$now deadline=$recovery_deadline"
+                if ! launch_core; then final_code=CORE_RECOVERY_FAILED; break; fi
                 deadline=$recovery_deadline
             fi
             rm -f "$RUN/healthy"
-            if alive "$RUN/core.pid" && ip link show flcrtun0 2>/dev/null | grep -q UP; then
-                port=$(cat "$R/config/controller.port")
-                if nc -w 1 127.0.0.1 "$port" < "$R/config/health.http" 2>/dev/null | head -n 1 | grep -q ' 200 '; then
-                    touch "$RUN/healthy"
-                else
-                    rm -f "$RUN/healthy"
-                fi
-            fi
+            if core_healthy; then touch "$RUN/healthy"; fi
             if [ -f "$RUN/healthy" ]; then
                 current=$(cat "$STATE/status")
                 case "$current" in
-                    recovering*) publish running CORE_RECOVERED; unset recovery_deadline ;;
+                    recovering*)
+                        runtime_log supervisor "recovery end bootSeconds=$now"
+                        publish running CORE_RECOVERED
+                        unset recovery_deadline
+                        ;;
                     starting*) publish running ;;
                 esac
                 deadline=$((now + 26))
-                if ! ip -4 route show table 2022 | grep -q flcrtun0 ||
-                    ! iptables -w 1 -C OUTPUT -j FCR_OUTPUT || ! ip6tables -w 1 -C OUTPUT -j FCR_OUTPUT; then
+                if ! network_intact; then
                     final_code=NETWORK_RULES_APPLY_FAILED
                     break
                 fi
@@ -316,36 +462,403 @@ supervise() {
         sleep 1
         if cleanup; then publish failed CLEANUP_FAILED; fi
     done
-    rm -f "$RUN/supervisor.pid" "$RUN/healthy"
-    rmdir "$RUN/owner.lock"
+    owns || return 0
+    rm -f "$RUN/supervisor.pid" "$RUN/supervisor.heartbeat" "$RUN/healthy"
+    unlock owner
+}
+
+package_status() {
+    path_result=0
+    package_path=$(timeout -s KILL 1 pm path com.follow.clash.root 2>&1) || path_result=$?
+    case "$path_result" in 0|1) ;; *) echo unknown; return ;; esac
+    if [ "$path_result" -eq 1 ] && [ -n "$package_path" ]; then echo unknown; return; fi
+    # Android returns 1 for an absent package; a successful exact list query must corroborate it.
+    package_list=$(timeout -s KILL 1 pm list packages com.follow.clash.root 2>&1) || { echo unknown; return; }
+    if [ -d /data/data/com.follow.clash.root ]; then echo present; return; fi
+    if printf '%s\n' "$package_list" | grep -v -E '^(package:[A-Za-z0-9_.]+)?$' | grep -q .; then echo unknown; return; fi
+    if printf '%s\n' "$package_list" | grep -qx 'package:com.follow.clash.root'; then
+        if [ -n "$package_path" ] && ! printf '%s\n' "$package_path" | grep -v '^package:/[^[:space:]]*$' | grep -q .; then
+            echo present
+        else echo unknown; fi
+    elif [ -z "$package_path" ]; then echo absent
+    else echo unknown; fi
+}
+
+own_entry() {
+    [ ! -L /data/adb/service.d ] && [ ! -L /data/adb/service.d/flclash-root.sh ] &&
+        [ -f /data/adb/service.d/flclash-root.sh ] &&
+        grep -qx '# flclash-root service.d v[12]' /data/adb/service.d/flclash-root.sh
+}
+
+remove_entry() {
+    if own_entry; then rm -f /data/adb/service.d/flclash-root.sh; fi
+}
+
+stop_boot() {
+    if alive "$RUN/boot.lock" && [ "$recorded_pid" != "$$" ]; then kill -TERM "$recorded_pid"; fi
+}
+
+uninstall_runtime() {
+    lock control || return 1
+    touch "$RUN/stop"
+    stop_boot
+    if alive "$RUN/supervisor.pid"; then kill -KILL "$recorded_pid"; fi
+    if ! claim_owner; then unlock control; return 1; fi
+    publish stopping
+    if ! cleanup; then
+        publish stopping CLEANUP_FAILED
+        log -t FlClashRoot 'uninstall confirmed; CLEANUP_FAILED, retrying' 2>/dev/null || true
+        unlock owner
+        unlock control
+        return 1
+    fi
+    remove_entry || { unlock owner; unlock control; return 1; }
+    log -t FlClashRoot 'com.follow.clash.root uninstall confirmed; cleanup complete; removing runtime' 2>/dev/null || true
+    if alive "$RUN/watchdog.pid" && [ "$recorded_pid" != "$$" ]; then kill -TERM "$recorded_pid"; fi
+    rm -rf "$R"
+}
+
+record_package_status() {
+    case "$1" in
+        absent) missing_count=$((missing_count + 1)) ;;
+        *) missing_count=0 ;;
+    esac
+    [ "$missing_count" -ge 2 ] || return 1
+    runtime_log watchdog 'uninstall confirmed for com.follow.clash.root'
+    uninstall_runtime
+}
+
+check_uninstall() {
+    record_package_status "$(package_status)"
+}
+
+write_settings() {
+    root_enabled=false
+    auto_enabled=false
+    [ "$(cat "$R/config/root-tun-enabled" 2>/dev/null)" != 1 ] || root_enabled=true
+    [ "$(cat "$R/config/autostart-enabled" 2>/dev/null)" != 1 ] || auto_enabled=true
+    printf '{"schemaVersion":1,"rootTunEnabled":%s,"autostartEnabled":%s}\n' \
+        "$root_enabled" "$auto_enabled" > "$R/config/settings.json.tmp" &&
+        mv "$R/config/settings.json.tmp" "$R/config/settings.json"
+}
+
+boot_failure() {
+    runtime_log boot "$1"
+    lock control || return 1
+    if ! fresh supervisor && claim_owner; then
+        publish stopping "$1"
+        if cleanup; then publish failed "$1"; else publish stopping CLEANUP_FAILED; fi
+        unlock owner
+    fi
+    unlock control
+}
+
+autostart_requested() {
+    if [ ! -f "$R/config/settings.json" ]; then
+        for setting in root-tun-enabled autostart-enabled; do
+            case "$(cat "$R/config/$setting" 2>/dev/null)" in 0|1) ;; *) return 2 ;; esac
+        done
+        write_settings || return 2
+    fi
+    grep -qx '{"schemaVersion":1,"rootTunEnabled":\(true\|false\),"autostartEnabled":\(true\|false\)}' "$R/config/settings.json" || return 2
+    grep -qx '{"schemaVersion":1,"rootTunEnabled":true,"autostartEnabled":true}' "$R/config/settings.json"
+}
+
+user_unlocked() {
+    [ "$(timeout -s KILL 1 cmd user is-user-unlocked 0 2>/dev/null)" = true ]
+}
+
+prune_boot_markers() {
+    for old_marker in "$RUN"/boot-*; do
+        [ -d "$old_marker" ] && [ ! -L "$old_marker" ] || continue
+        marker_id=${old_marker##*/boot-}
+        if printf '%s\n' "$marker_id" | grep -Eq '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'; then
+            rmdir "$old_marker" 2>/dev/null || true
+        fi
+    done
+}
+
+bootstrap() {
+    lock boot || return 0
+    prune_boot_markers
+    trap 'unlock boot' EXIT
+    trap 'exit 0' TERM INT HUP
+    boot_deadline=$(($(boot_seconds) + 120))
+    while [ "$(getprop sys.boot_completed)" != 1 ]; do
+        if [ "$(boot_seconds)" -ge "$boot_deadline" ]; then boot_failure AUTOSTART_FAILED; return 1; fi
+        sleep 2
+    done
+    unlock_deadline=$(($(boot_seconds) + 300))
+    while ! user_unlocked; do
+        if [ "$(boot_seconds)" -ge "$unlock_deadline" ]; then boot_failure AUTOSTART_FAILED; return 1; fi
+        sleep 2
+    done
+    dependency_deadline=$(($(boot_seconds) + 50))
+    missing_count=0
+    next_package_check=0
+    while :; do
+        now=$(boot_seconds)
+        if [ "$now" -ge "$next_package_check" ]; then
+            next_package_check=$((now + 10))
+            check_uninstall && return 0
+        fi
+        package=$(package_status)
+        if [ "$package" = present ]; then
+            settings_result=0
+            autostart_requested || settings_result=$?
+            case "$settings_result" in
+                1) return 0 ;;
+                2) boot_failure AUTOSTART_FAILED; return 1 ;;
+            esac
+        fi
+        if [ "$package" = present ] && ip -4 route show table all | grep -E '^default .* (via|dev) |^default (via|dev) ' | grep -v flcrtun0 >/dev/null; then break; fi
+        if [ "$now" -ge "$dependency_deadline" ]; then boot_failure AUTOSTART_FAILED; return 1; fi
+        sleep 2
+    done
+    [ "$(cat "$RUN/boot-id" 2>/dev/null)" != "$BOOT" ] || return 0
+    case "$(manager_authorization)" in
+        granted) ;;
+        denied) revoke_runtime AUTOSTART_ROOT_REVOKED; return 1 ;;
+        *) boot_failure AUTOSTART_FAILED; return 1 ;;
+    esac
+    if [ ! -s "$R/config/config.yaml" ] || [ ! -x "$CORE" ]; then boot_failure AUTOSTART_FAILED; return 1; fi
+    if [ "$(boot_seconds)" -gt "$dependency_deadline" ]; then boot_failure AUTOSTART_FAILED; return 1; fi
+    start_deadline=$(($(boot_seconds) + 10))
+    printf '%s\n' "$BOOT" > "$RUN/boot-id.tmp" && mv "$RUN/boot-id.tmp" "$RUN/boot-id"
+    runtime_log boot 'autostart submitted'
+    /system/bin/sh "$R/scripts/runtime.sh" start || { boot_failure AUTOSTART_FAILED; return 1; }
+    saw_start=0
+    while [ "$(boot_seconds)" -lt "$start_deadline" ]; do
+        [ "$(cat "$STATE/auth-status" 2>/dev/null)" != revoked ] || return 1
+        case "$(cat "$STATE/status" 2>/dev/null)" in
+            running*) runtime_log boot 'autostart running'; return 0 ;;
+            starting*|recovering*) saw_start=1 ;;
+            failed*) if [ "$saw_start" -eq 1 ]; then boot_failure AUTOSTART_FAILED; return 1; fi ;;
+        esac
+        sleep 1
+    done
+    boot_failure AUTOSTART_FAILED
+}
+
+revoke_runtime() {
+    lock control || return 1
+    printf '%s\n' "$1" > "$STATE/revocation-code"
+    touch "$RUN/stop"
+    stop_boot
+    if alive "$RUN/supervisor.pid"; then kill -KILL "$recorded_pid"; fi
+    if ! claim_owner; then unlock control; return 1; fi
+    publish stopping "$1"
+    if cleanup && remove_entry; then
+        echo 0 > "$R/config/autostart-enabled"
+        write_settings
+        printf '%s\n' revoked > "$STATE/auth-status"
+        publish failed "$1"
+        runtime_log watchdog "$1 cleanup complete"
+        cmd notification post -t 'FlClash Root TUN' flclash-root "$1" >/dev/null 2>&1 || true
+        notify_app_cleanup "$1"
+        if ! alive "$RUN/watchdog.pid"; then detach watchdog; fi
+        result=0
+    else
+        publish stopping CLEANUP_FAILED
+        result=1
+    fi
+    unlock owner
+    unlock control
+    return "$result"
+}
+
+record_authorization() {
+    manager_auth=$1
+    case "$manager_auth" in
+        denied) denied_count=$((denied_count + 1)) ;;
+        *) denied_count=0 ;;
+    esac
+    app_auth=$2
+    runtime_log watchdog "authorization manager=$manager_auth app=$app_auth"
+    if [ "$denied_count" -ge 2 ] || [ "$app_auth" = revoked ]; then revoke_runtime ROOT_PERMISSION_REVOKED; fi
+}
+
+start_probe() {
+    if alive "$RUN/$1-probe.pid"; then return 0; fi
+    probe_id="$$-$(boot_seconds)"
+    rm -f "$RUN/$1.result"
+    /system/bin/sh "$R/scripts/runtime.sh" "probe-$1" "$probe_id" </dev/null >/dev/null 2>&1 &
+    probe_pid=$!
+    printf '%s %s %s\n' "$probe_pid" "$(ticks "$probe_pid")" "$BOOT" > "$RUN/$1-probe.pid"
+    printf '%s\n' "$probe_id" > "$RUN/$1-probe.id"
+}
+
+stop_probes() {
+    for probe in package auth; do
+        if alive "$RUN/$probe-probe.pid"; then kill -TERM "$recorded_pid" 2>/dev/null || true; fi
+        rm -f "$RUN/$probe-probe.pid" "$RUN/$probe-probe.id" "$RUN/$probe.result"
+    done
+}
+
+watchdog() {
+    lock watchdog || return 0
+    trap 'stop_probes; rm -f "$RUN/watchdog.pid" "$RUN/watchdog.heartbeat"; unlock watchdog' EXIT
+    trap 'exit 0' TERM INT HUP
+    printf '%s\n' "$IDENTITY" > "$RUN/watchdog.pid"
+    generation=$(cat "$RUN/generation" 2>/dev/null) || generation=0
+    runtime_log watchdog 'watchdog started'
+    orphan_since=0
+    missing_count=0
+    denied_count=0
+    next_auth_check=0
+    next_package_check=0
+    while :; do
+        heartbeat watchdog
+        if [ -f "$STATE/revocation-code" ] && [ "$(cat "$STATE/auth-status" 2>/dev/null)" != revoked ]; then
+            revoke_runtime "$(cat "$STATE/revocation-code")" || true
+            if [ "$(cat "$STATE/auth-status" 2>/dev/null)" != revoked ]; then sleep 1; continue; fi
+        fi
+        if [ -f "$RUN/package.result" ]; then
+            read -r result_id package_result < "$RUN/package.result"
+            rm -f "$RUN/package.result"
+            if [ "$result_id" = "$(cat "$RUN/package-probe.id" 2>/dev/null)" ]; then
+                record_package_status "$package_result" && return 0
+            fi
+        fi
+        if [ -f "$RUN/auth.result" ]; then
+            read -r result_id manager_result app_result < "$RUN/auth.result"
+            rm -f "$RUN/auth.result"
+            if [ "$result_id" = "$(cat "$RUN/auth-probe.id" 2>/dev/null)" ] &&
+                [ "$(cat "$STATE/auth-status" 2>/dev/null)" != revoked ]; then record_authorization "$manager_result" "$app_result"; fi
+        fi
+        if [ "$(boot_seconds)" -ge "$next_package_check" ]; then
+            next_package_check=$(($(boot_seconds) + 10))
+            start_probe package
+        fi
+        if [ "$(boot_seconds)" -ge "$next_auth_check" ]; then
+            next_auth_check=$(($(boot_seconds) + 2))
+            start_probe auth
+        fi
+        if [ "$(cat "$STATE/auth-status" 2>/dev/null)" = revoked ]; then sleep 1; continue; fi
+        if [ ! -f "$STATE/owned" ]; then
+            case "$(cat "$STATE/status" 2>/dev/null)" in
+                disabled*) return 0 ;;
+                failed*) sleep 1; continue ;;
+            esac
+        fi
+        if ! fresh supervisor && lock control; then
+            if fresh supervisor; then unlock control; continue; fi
+            if alive "$RUN/supervisor.pid"; then kill -KILL "$recorded_pid"; fi
+            [ "$orphan_since" -ne 0 ] || orphan_since=$(boot_seconds)
+            if claim_owner; then
+                if [ -f "$RUN/stop" ]; then
+                    publish stopping
+                    if cleanup; then publish disabled; unlock owner; unlock control; return 0; fi
+                    publish stopping CLEANUP_FAILED
+                elif [ $(($(boot_seconds) - orphan_since)) -lt 24 ] && core_healthy && network_intact; then
+                    runtime_log watchdog "supervisor takeover generation=$generation"
+                    heartbeat watchdog
+                    unlock owner
+                    detach supervise adopt
+                    unlock control
+                    sleep 1
+                else
+                    runtime_log watchdog 'supervisor/core lost; fail-open cleanup'
+                    publish stopping CORE_RECOVERY_FAILED
+                    if cleanup; then
+                        publish failed CORE_RECOVERY_FAILED
+                        unlock owner
+                        unlock control
+                        sleep 1
+                        continue
+                    fi
+                    publish stopping CLEANUP_FAILED
+                fi
+                unlock owner
+            fi
+            unlock control
+        else
+            orphan_since=0
+        fi
+        if [ -f "$RUN/stop" ] && [ ! -f "$STATE/owned" ] && ! alive "$RUN/supervisor.pid"; then return 0; fi
+        rotate_log watchdog
+        sleep 1
+    done
+}
+
+stop_runtime() {
+    printf '%s\n' "$BOOT" > "$RUN/boot-id.tmp" && mv "$RUN/boot-id.tmp" "$RUN/boot-id"
+    touch "$RUN/stop"
+    stop_boot
+    for _wait_count in 1 2 3 4 5 6 7 8 9 10; do
+        alive "$RUN/supervisor.pid" || break
+        sleep 0.1
+    done
+    if alive "$RUN/supervisor.pid"; then kill -KILL "$recorded_pid" || return 1; fi
+    claim_owner || return 1
+    publish stopping
+    if ! cleanup; then publish stopping CLEANUP_FAILED; unlock owner; return 1; fi
+    publish disabled
+    if alive "$RUN/watchdog.pid"; then kill -TERM "$recorded_pid"; fi
+    unlock owner
+    rm -f "$RUN/supervisor.pid" "$RUN/supervisor.heartbeat" "$RUN/healthy"
 }
 
 safe_tree || exit 1
+# shellcheck source=android/app/src/main/assets/root-tun/authorization.sh
+. "$R/scripts/authorization.sh"
+IDENTITY="$$ $(ticks "$$") $BOOT"
 case "${1:-}" in
-    start)
-        alive "$RUN/supervisor.pid" && exit 0
-        nohup /system/bin/sh "$R/scripts/runtime.sh" supervise </dev/null >> "$R/logs/watchdog.log" 2>&1 &
+    probe-package)
+        printf '%s %s\n' "$2" "$(package_status)" > "$RUN/package.result.$$"
+        mv "$RUN/package.result.$$" "$RUN/package.result"
         ;;
-    supervise) supervise ;;
-    stop|cleanup)
-        if alive "$RUN/supervisor.pid"; then
-            touch "$RUN/stop"
-            for _wait_count in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27; do
-                alive "$RUN/supervisor.pid" || break
-                sleep 0.1
-            done
-            alive "$RUN/supervisor.pid" && exit 1
+    probe-auth)
+        if [ "$(cat "$STATE/auth-status" 2>/dev/null)" = revoked ]; then
+            notify_app_cleanup "$(cut -d' ' -f2 "$STATE/status")"
+            exit 0
         fi
-        cleanup || { publish stopping CLEANUP_FAILED; exit 1; }
-        publish disabled
+        printf '%s %s %s\n' "$2" "$(manager_authorization)" "$(app_authorization)" > "$RUN/auth.result.$$"
+        mv "$RUN/auth.result.$$" "$RUN/auth.result"
+        ;;
+    boot) detach bootstrap ;;
+    bootstrap) bootstrap ;;
+    settings) write_settings ;;
+    start)
+        if ! wait_control; then exit 1; fi
+        if fresh supervisor; then ensure_watchdog; unlock control; exit 0; fi
+        printf '%s\n' "$BOOT" > "$RUN/boot-id.tmp" && mv "$RUN/boot-id.tmp" "$RUN/boot-id"
+        rm -f "$RUN/stop" "$STATE/auth-status" "$STATE/revocation-code"
+        if [ ! -f "$STATE/owned" ]; then rm -f "$RUN/crash-times"; fi
+        if [ -d "$RUN/owner.lock" ] && [ ! -f "$RUN/generation" ] && core_healthy; then
+            if alive "$RUN/supervisor.pid"; then kill -KILL "$recorded_pid"; fi
+            rmdir "$RUN/owner.lock" || { unlock control; exit 1; }
+            detach supervise adopt
+        else detach supervise; fi
+        unlock control
+        for _start_attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if fresh supervisor; then
+                case "$(cat "$STATE/status" 2>/dev/null)" in starting*|running*|recovering*) break ;; esac
+            fi
+            sleep 0.1
+        done
+        ;;
+    spawn)
+        shift
+        nohup /system/bin/sh "$R/scripts/runtime.sh" "$@" </dev/null >/dev/null 2>&1 &
+        ;;
+    supervise) supervise "${2:-}" ;;
+    watchdog) watchdog ;;
+    stop|cleanup)
+        wait_control || exit 1
+        stop_runtime
+        result=$?
+        unlock control
+        exit "$result"
         ;;
     status)
         cat "$STATE/status" 2>/dev/null || echo disabled
+        printf 'auth:%s\n' "$(cat "$STATE/auth-status" 2>/dev/null)"
         printf 'dns:%s\n' "$(cat "$STATE/private-dns" 2>/dev/null)"
         if [ -s "$R/logs/restore-diff.txt" ]; then echo restore-diff:yes; fi
         always_on=$(settings get secure always_on_vpn_app 2>/dev/null)
         if [ "$always_on" = "$(cat "$R/config/app.package" 2>/dev/null)" ]; then echo always-on:yes; fi
-        alive "$RUN/supervisor.pid" || exit 1
+        fresh supervisor || exit 1
         alive "$RUN/core.pid" || exit 1
         ip link show flcrtun0 | grep -q 'UP' || exit 1
         ip -4 route show table 2022 | grep -q flcrtun0 || exit 1
