@@ -1,6 +1,7 @@
 import html
 import json
 import os
+import re
 import sys
 
 import requests
@@ -9,7 +10,7 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TAG = os.getenv("TAG")
 RUN_ID = os.getenv("RUN_ID")
 
-IS_STABLE = "-" not in TAG
+IS_STABLE = re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(-root\.[0-9]+)?", TAG or "") is not None
 
 CHAT_ID = "@FlClash"
 API_URL = f"http://localhost:8081/bot{TELEGRAM_BOT_TOKEN}/sendMediaGroup"
@@ -51,9 +52,9 @@ if TAG:
     text += f"\n<b>{html.escape(TAG)}</b>\n"
 
 if IS_STABLE:
-    text += f"\nhttps://github.com/chen08209/FlClash/releases/tag/{TAG}\n"
+    text += f"\nhttps://github.com/yuanjing-hash/FlClash/releases/tag/{TAG}\n"
 else:
-    text += f"\nhttps://github.com/chen08209/FlClash/actions/runs/{RUN_ID}\n"
+    text += f"\nhttps://github.com/yuanjing-hash/FlClash/actions/runs/{RUN_ID}\n"
 
 if os.path.exists(release):
     text += "\n"
