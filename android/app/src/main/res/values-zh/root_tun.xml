@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="root_tun_disabled">Root TUN 已停止。</string>
+    <string name="root_tun_awaitingauth">请在 root 管理器中授权，然后返回 FlClash 重新检测。</string>
+    <string name="root_tun_starting">正在启动 Root TUN…</string>
+    <string name="root_tun_running">Root TUN 正在运行。</string>
+    <string name="root_tun_recovering">正在恢复 Root TUN…</string>
+    <string name="root_tun_stopping">正在清理 Root TUN…</string>
+    <string name="root_tun_failed">Root TUN 失败，请打开 App 导出诊断日志。</string>
+    <string name="root_tun_degraded">设备未满足 Root TUN 条件。</string>
+    <string name="root_tun_stop">停止</string>
+    <string name="root_tun_root_not_found">未检测到 root 权限，可使用 VPN 模式。</string>
+    <string name="root_tun_root_manager_unsupported">仅支持 Magisk、KernelSU、APatch。</string>
+    <string name="root_tun_android_version_unsupported">Root TUN 需要 Android 10 及以上。</string>
+    <string name="root_tun_root_permission_denied">root 授权被拒绝，请重试。</string>
+    <string name="root_tun_root_grant_required_in_manager">请在 root 管理器中为 FlClash Root（com.follow.clash.root）授权，然后返回 App 重新检测。</string>
+    <string name="root_tun_root_grant_not_detected">仍未检测到授权，请检查管理器中的授权开关。</string>
+    <string name="root_tun_root_permission_timeout">等待 Magisk 授权超过 30 秒，请重试。</string>
+    <string name="root_tun_root_permission_revoked">root 授权已撤销，请重新授权并检查诊断日志。</string>
+    <string name="root_tun_autostart_root_revoked">开机 root 授权已撤销。</string>
+    <string name="root_tun_tun_device_unsupported">内核不支持 TUN，请使用 VPN 模式。</string>
+    <string name="root_tun_tun_create_failed">TUN 创建失败，请导出诊断日志。</string>
+    <string name="root_tun_network_rules_apply_failed">网络规则写入失败，请检查其他代理或防火墙模块。</string>
+    <string name="root_tun_dns_takeover_failed">DNS 接管失败，正在恢复直连。</string>
+    <string name="root_tun_core_start_failed">核心启动失败，请检查当前配置并导出诊断日志。</string>
+    <string name="root_tun_start_timeout">Root TUN 启动超过 10 秒，正在回滚。</string>
+    <string name="root_tun_core_crashed_recovering">核心异常退出，正在自动恢复。</string>
+    <string name="root_tun_core_recovered">代理已自动恢复。</string>
+    <string name="root_tun_core_recovery_failed">恢复失败，已清理规则并切换直连。</string>
+    <string name="root_tun_core_crash_loop">5 分钟内核心崩溃 3 次，已停止恢复并清理规则。</string>
+    <string name="root_tun_last_session_abnormal_exit">上次会话异常退出，请核对当前网络状态。</string>
+    <string name="root_tun_mode_switching">正在切换代理模式，请稍候。</string>
+    <string name="root_tun_mode_switch_failed">模式切换失败，请重试并导出日志。</string>
+    <string name="root_tun_always_on_vpn_conflict">请到系统 VPN 设置关闭始终开启的 VPN 及屏蔽未使用 VPN 的连接。</string>
+    <string name="root_tun_private_dns_auto_taken_over">已接管私人 DNS（自动）。</string>
+    <string name="root_tun_private_dns_strict">私人 DNS 指定了服务器，DNS 不会经由 FlClash。可到系统设置改为自动或关闭。</string>
+    <string name="root_tun_autostart_failed">开机自启失败，网络保持直连。</string>
+    <string name="root_tun_cleanup_failed">Root TUN 清理未完成，可能影响上网。请在 App 清理残留，仍失败请重启手机。</string>
+</resources>

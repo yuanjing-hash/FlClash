@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="root_tun_disabled">Root TUN is stopped.</string>
+    <string name="root_tun_awaitingauth">Grant root access in your root manager, then recheck in FlClash.</string>
+    <string name="root_tun_starting">Starting Root TUN…</string>
+    <string name="root_tun_running">Root TUN is running.</string>
+    <string name="root_tun_recovering">Recovering Root TUN…</string>
+    <string name="root_tun_stopping">Cleaning up Root TUN…</string>
+    <string name="root_tun_failed">Root TUN failed. Open FlClash to export diagnostics.</string>
+    <string name="root_tun_degraded">Root TUN prerequisites are not met.</string>
+    <string name="root_tun_stop">Stop</string>
+    <string name="root_tun_root_not_found">Root not found. Open FlClash for diagnostics.</string>
+    <string name="root_tun_root_manager_unsupported">Root manager unsupported. Open FlClash for diagnostics.</string>
+    <string name="root_tun_android_version_unsupported">Android version unsupported. Open FlClash for diagnostics.</string>
+    <string name="root_tun_root_permission_denied">Root permission denied. Open FlClash for diagnostics.</string>
+    <string name="root_tun_root_grant_required_in_manager">Root grant required in manager. Open FlClash for diagnostics.</string>
+    <string name="root_tun_root_grant_not_detected">Root grant not detected. Open FlClash for diagnostics.</string>
+    <string name="root_tun_root_permission_timeout">Root permission timeout. Open FlClash for diagnostics.</string>
+    <string name="root_tun_root_permission_revoked">Root permission revoked. Open FlClash for diagnostics.</string>
+    <string name="root_tun_autostart_root_revoked">Autostart root revoked. Open FlClash for diagnostics.</string>
+    <string name="root_tun_tun_device_unsupported">Tun device unsupported. Open FlClash for diagnostics.</string>
+    <string name="root_tun_tun_create_failed">Tun create failed. Open FlClash for diagnostics.</string>
+    <string name="root_tun_network_rules_apply_failed">Network rules apply failed. Open FlClash for diagnostics.</string>
+    <string name="root_tun_dns_takeover_failed">Dns takeover failed. Open FlClash for diagnostics.</string>
+    <string name="root_tun_core_start_failed">Core start failed. Open FlClash for diagnostics.</string>
+    <string name="root_tun_start_timeout">Start timeout. Open FlClash for diagnostics.</string>
+    <string name="root_tun_core_crashed_recovering">Core crashed recovering. Open FlClash for diagnostics.</string>
+    <string name="root_tun_core_recovered">Core recovered. Open FlClash for diagnostics.</string>
+    <string name="root_tun_core_recovery_failed">Core recovery failed. Open FlClash for diagnostics.</string>
+    <string name="root_tun_core_crash_loop">Core crash loop. Open FlClash for diagnostics.</string>
+    <string name="root_tun_last_session_abnormal_exit">Last session abnormal exit. Open FlClash for diagnostics.</string>
+    <string name="root_tun_mode_switching">Mode switching. Open FlClash for diagnostics.</string>
+    <string name="root_tun_mode_switch_failed">Mode switch failed. Open FlClash for diagnostics.</string>
+    <string name="root_tun_always_on_vpn_conflict">Always on vpn conflict. Open FlClash for diagnostics.</string>
+    <string name="root_tun_private_dns_auto_taken_over">Private dns auto taken over. Open FlClash for diagnostics.</string>
+    <string name="root_tun_private_dns_strict">Private dns strict. Open FlClash for diagnostics.</string>
+    <string name="root_tun_autostart_failed">Autostart failed. Open FlClash for diagnostics.</string>
+    <string name="root_tun_cleanup_failed">Cleanup failed. Open FlClash for diagnostics.</string>
+</resources>
