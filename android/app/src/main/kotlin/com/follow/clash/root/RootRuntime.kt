@@ -285,10 +285,9 @@ internal class RootRuntime(
                     "export APP_UID=${context.applicationInfo.uid} ROOT_MANAGER=${RootShell.quote(manager)}\n" + collector
             ).toByteArray()
         val diagnosticShell = RootShell(4 * 1024 * 1024)
-        val command = "export TMPDIR=${RootShell.quote(context.cacheDir.path)}; /system/bin/sh"
         val result =
             if (privileged) {
-                diagnosticShell.root(command, 15_000, script)
+                diagnosticShell.root("/system/bin/sh", 15_000, script)
             } else {
                 diagnosticShell.execute(listOf("sh", "-c", "export TMPDIR=${RootShell.quote(context.cacheDir.path)}; sh"), 15_000, script)
             }

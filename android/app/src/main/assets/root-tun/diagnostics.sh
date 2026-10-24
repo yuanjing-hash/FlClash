@@ -2,6 +2,11 @@
 # shellcheck disable=SC2016
 R=/data/adb/flclash-root
 exec 2>&1
+if [ "$(id -u)" = 0 ]; then
+    umask 077
+    mkdir -p "$R/tmp" && chmod 700 "$R/tmp" || exit 1
+    export TMPDIR="$R/tmp"
+fi
 D=$(mktemp -d "${TMPDIR:-$R/tmp}/root-diagnostics.XXXXXX") || exit 1
 trap 'rm -rf "$D"' EXIT
 export R D
@@ -16,8 +21,13 @@ collect() {
     seconds=$2
     shift 2
     (
-        result=0
-        timeout -s KILL "$seconds" sh -c 'ulimit -f 192; exec "$@"' sh "$@" > "$D/$item.raw" 2>&1 || result=$?
+        # Drain after the truncation sentinel so producers retain their exit status instead of SIGPIPE.
+        (
+            result=0
+            timeout -s KILL "$seconds" "$@" 2>&1 || result=$?
+            printf '%s\n' "$result" > "$D/$item.exit"
+        ) | { head -c 98305 > "$D/$item.raw"; cat > /dev/null; }
+        result=$(cat "$D/$item.exit")
         size=$(wc -c < "$D/$item.raw" | tr -d ' ')
         truncated=no
         [ "$size" -le 98304 ] || truncated=yes
