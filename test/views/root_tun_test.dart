@@ -13,6 +13,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 
 import '../helpers/app_paths.dart';
+import '../helpers/preferences.dart';
 import '../helpers/test_app.dart';
 import '../support/root_tun.dart';
 
@@ -32,6 +33,7 @@ void main() {
   late List<MethodCall> shareCalls;
 
   setUp(() async {
+    await mockPreferences();
     directory = await Directory.systemTemp.createTemp('root_tun_view_');
     await useAppPaths(directory);
     shareCalls = [];
@@ -293,6 +295,70 @@ void main() {
       'acknowledgeFailure',
     );
   });
+
+  for (final (state, manager, code) in [
+    ('degraded', 'kernelsu', RootTunCode.cleanupFailed),
+    ('degraded', 'kernelsu', RootTunCode.rootPermissionRevoked),
+    ('degraded', 'kernelsu', RootTunCode.modeSwitchFailed),
+    ('failed', 'magisk', RootTunCode.coreStartFailed),
+    ('awaitingAuth', 'kernelsu', RootTunCode.rootGrantRequiredInManager),
+    ('awaitingAuth', 'apatch', RootTunCode.rootGrantRequiredInManager),
+  ]) {
+    testWidgets('$manager $code does not repeat after leaving settings', (
+      tester,
+    ) async {
+      snapshot = rootTunSnapshotJson(
+        state: state,
+        manager: manager,
+        error: code,
+        autostart: false,
+      );
+      await pump(
+        tester,
+        view: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => Navigator.of(context).push<void>(
+              MaterialPageRoute(
+                builder: (_) => Scaffold(
+                  body: ListView(children: const [RootTunSection()]),
+                ),
+              ),
+            ),
+            child: const Text('Open Root TUN'),
+          ),
+        ),
+      );
+      await tester.tap(find.text('Open Root TUN'));
+      await tester.pumpAndSettle();
+      expect(find.text('确定'), findsWidgets);
+      await tester.tap(find.text('确定').last);
+      await tester.pumpAndSettle();
+
+      Navigator.of(tester.element(find.byType(RootTunSection))).pop();
+      await tester.pumpAndSettle();
+      expect(find.byType(RootTunSection), findsNothing);
+      final detections = calls
+          .where((call) => call.method == 'detectRoot')
+          .length;
+      snapshot = {
+        ...snapshot,
+        'seq': (snapshot['seq'] as int) + 1,
+        'updatedAt': (snapshot['updatedAt'] as int) + 1,
+      };
+      await tester.tap(find.text('Open Root TUN'));
+      await tester.pumpAndSettle();
+      expect(find.byType(RootTunSection), findsOneWidget);
+      expect(
+        calls.where((call) => call.method == 'detectRoot').length,
+        greaterThan(detections),
+      );
+      expect(
+        find.text('确定'),
+        state == 'failed' ? findsOneWidget : findsNothing,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets(
     'missing native channel exposes diagnostic details and export fallback',
