@@ -165,6 +165,31 @@ authStatus/错误码与通知可见性，重新授权后恢复；Android 17 本�
 11. Android 17 root 身份 cmd notification post 的通知可见性。
 12. service.d/su SELinux 上下文下 timeout、nc、od、sha256sum、cksum、setsid、ln、sleep、diff、sed、awk 的可用性。
 
+## PR #31 复审跟进（S1–S3）
+
+本次工作分支为 `feature/root-tun-p0-followup`，基线为 `a42c58f`（`b9fbd4a` 加用户解锁探测超时的小修）。
+以下记录本次跟进；其他章节的提交号、43 条 Shell PASS 与 28 项 JVM 测试为上轮返工留档。
+
+| 项目 | 处理 | 对应验证 |
+| --- | --- | --- |
+| S2：回报过期 | runtime 的 status 输出与 authorization 的签名回报均写入 `bootMs`，使用 `/proc/uptime` 的毫秒值；App 用 `SystemClock.elapsedRealtime()` 比较，常量 `RootRuntimeReport.MAX_AGE_MS = 8000`。每次读取都重新判断年龄，超过 8 秒即失效；无时间字段的旧格式、非法/重复/未来时间同样视为过期，重放旧回报不会刷新期限 | RootAuthorizationTest 经真实本机签名通道验证新鲜回报、8 秒边界、超时、旧格式、异常时间、重放和新回报恢复；RootTunControllerTest 验证新鲜回报可恢复 running，过期与旧格式不能用于 running；Shell 验证签名包含 bootMs，runtime status 输出毫秒字段 |
+| S1：Magisk 无回报降频 | Controller 首次发现缺失/过期回报即标 stale；连续 30 秒未恢复后，reconcile 从每秒一次降至每 30 秒一次，由 `ReconciliationPolling` 的常量控制。新鲜回报或显式新命令重置降频。后台始终只消费签名回报，不查询 su，也不因超时调用 stop/start/attach；App 侧授权探测继续排除 Magisk | RootTunControllerTest 用可控单调时间覆盖连续 95 秒无回报：前 30 秒每秒核对，随后仅在第 60/90 秒核对；断言 su 调用数为 0、授权探测禁用、手动检查映射及重置后恢复高频 |
+| S3：proxyStop 后降低探测频率 | 同时满足 `run/stop` 存在、`state/status = disabled -`、`state/owned` 已删除才按已 proxyStop 处理，授权探测间隔为 15 秒；运行中及清理未完成仍为 2 秒。模式变化立即重置调度，重新运行不继承旧的 15 秒等待；卸载探测仍每 10 秒一次 | authorization-test 运行真实 watchdog 调度函数，模拟运行→停止→恢复，断言探测时刻为 0/2/4、5/20、35/37/39 秒；同时验证仅有 stop 标记或 stopping+CLEANUP_FAILED 不会降频。原 runtime-test 继续覆盖重复 start/stop/cleanup 及 proxyStop 保留 watchdog |
+
+手动检查沿用 `stale=true + stopping + CLEANUP_FAILED`：现有 UI 展示状态待核及清理风险，用户可重新检测或停止。
+缺失回报只能说明运行/规则未获确认，因此不使用会宣称“已恢复直连”的 CORE_RECOVERY_FAILED，也不推断授权已撤销。
+新鲜回报经既有 reconciliation 清除该临时错误并恢复真实状态；本次没有新增八态之外的状态或 27 个业务错误码之外的码。
+旧格式继续完成原通道交互，但不能作为新鲜运行凭据；升级旧驻留脚本仍需要用户显式启动授权路径。
+
+本次验证日志统一位于 `out/root-tun-p0-followup-*.log`，使用本 REPORT 下列相同的 Shell/JVM 命令。
+本次结果：`sh android/root-tun/tests/run.sh` 全部通过（46 条 PASS）；`python3 out/compile-native.py` 编译通过、31 项 JUnit 通过；
+ShellCheck 0.11.0（`-s sh -x`）零告警，所有脚本 `sh -n`、ktlint、diff whitespace 与 comment-density 检查通过。
+JVM 编译仍使用现有 `out/compile-native.py` 的依赖与桩，不能代替正式 Gradle/APK 或真机验证。
+`flutter pub get`、`flutter analyze --no-fatal-infos` 及 Root TUN plugin/provider/view 的 `flutter test` 已尝试，均因 PATH 无 flutter 无法执行；仓库仍无 Gradle wrapper。
+三家管理器、HyperOS/Android 17 的实际计时、授权提示和后台进程行为仍须按原真机清单核验。
+
+本次未运行 git add/commit/push，未写入 `.git` 或 `~/.codex`；建议提交分组见 `out/root-tun-p0-followup-commits.txt`。
+
 ## 文件与验证方式
 
 本轮改动：assets/root-tun/{runtime,authorization}.sh；RootRuntime、RootTunController、RootAuthorization；
