@@ -265,14 +265,32 @@ internal class RootRuntime(
         }.getOrDefault(false)
     }
 
-    fun diagnostics(privileged: Boolean): RootDiagnosticEvidence {
-        val script = context.assets.open("root-tun/diagnostics.sh").use { it.readBytes() }
-        val diagnosticShell = RootShell()
+    fun diagnostics(
+        privileged: Boolean,
+        manager: String,
+    ): RootDiagnosticEvidence {
+        val authorization =
+            context.assets
+                .open("root-tun/authorization.sh")
+                .bufferedReader()
+                .use { it.readText() }
+        val collector =
+            context.assets
+                .open("root-tun/diagnostics.sh")
+                .bufferedReader()
+                .use { it.readText() }
+        val script =
+            (
+                "AUTH_SOURCE=${RootShell.quote(authorization)}\n" +
+                    "export APP_UID=${context.applicationInfo.uid} ROOT_MANAGER=${RootShell.quote(manager)}\n" + collector
+            ).toByteArray()
+        val diagnosticShell = RootShell(4 * 1024 * 1024)
+        val command = "export TMPDIR=${RootShell.quote(context.cacheDir.path)}; /system/bin/sh"
         val result =
             if (privileged) {
-                diagnosticShell.root("/system/bin/sh", 9_000, script)
+                diagnosticShell.root(command, 15_000, script)
             } else {
-                diagnosticShell.execute(listOf("sh"), 9_000, script)
+                diagnosticShell.execute(listOf("sh", "-c", "export TMPDIR=${RootShell.quote(context.cacheDir.path)}; sh"), 15_000, script)
             }
         return RootDiagnosticEvidence.parse(result)
     }

@@ -54,6 +54,33 @@ class RootDiagnosticsTest {
     }
 
     @Test
+    fun manifestSurvivesLargeEvidenceAndReportsInterruptedCollection() {
+        val manifest = "clock exit=0 timeout=no truncated=no bytes=80\nnft exit=137 timeout=yes truncated=no bytes=0"
+        val raw =
+            "[FLCLASH:manifest:BEGIN]\n$manifest\n[FLCLASH:manifest:END]\n" +
+                "[FLCLASH:network:BEGIN]\n${"x".repeat(1_100_000)}\n[FLCLASH:network:END]\n"
+        val evidence = RootDiagnosticEvidence.parse(ShellResult(0, raw, ""))
+        assertEquals(manifest, evidence.manifest)
+        val zipFile = RootDiagnostics.archive(temporary.newFolder(), "device", RootSnapshot(), emptyMap(), evidence)
+        ZipFile(zipFile).use { zip ->
+            assertTrue(
+                zip
+                    .getInputStream(zip.getEntry("manifest.txt"))
+                    .reader()
+                    .readText()
+                    .contains("nft exit=137 timeout=yes"),
+            )
+            assertTrue(zip.getInputStream(zip.getEntry("network-and-core.txt")).readBytes().size > 1_048_576)
+        }
+        val interrupted =
+            RootDiagnosticEvidence.parse(
+                ShellResult(-1, "[collected] clock exit=0 timeout=no truncated=no bytes=80\npartial", "", timedOut = true),
+            )
+        assertTrue(interrupted.manifest.contains("clock exit=0"))
+        assertTrue(interrupted.manifest.contains("nft not confirmed"))
+    }
+
+    @Test
     fun requestIdMustBeAUuid() {
         val requestId = "7fb480b6-08a9-4113-8505-912671462d51"
         assertEquals(requestId, requireRequestId(requestId))
