@@ -321,8 +321,12 @@ jobs:
 
   build:
     name: Android APK
-    # Every push (any branch or v* tag) and manual runs build APKs; PR events reuse the branch push run.
-    if: github.repository == 'yuanjing-hash/FlClash' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # Every push (any branch or v* tag) and manual runs build APKs. PRs into the integration branch
+    # also build, because a head branch cut before the fork CI landed runs the upstream workflow on push.
+    if: >-
+      github.repository == 'yuanjing-hash/FlClash' && (
+        github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'pull_request' && github.base_ref == 'feature/root-tun-integration'))
     runs-on: ubuntu-latest
     outputs:
       stable: ${{ steps.version.outputs.stable }}
@@ -383,10 +387,11 @@ jobs:
       - name: Setup Android signing
         id: signing
         env:
-          KEYSTORE: ${{ secrets.KEYSTORE }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          # PR builds get none of the signing secrets and stay debug-signed; they are only used on push and manual runs.
+          KEYSTORE: ${{ github.event_name != 'pull_request' && secrets.KEYSTORE || '' }}
+          KEY_ALIAS: ${{ github.event_name != 'pull_request' && secrets.KEY_ALIAS || '' }}
+          STORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.STORE_PASSWORD || '' }}
+          KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.KEY_PASSWORD || '' }}
         run: |
           if [[ -n "$KEYSTORE" && -n "$KEY_ALIAS" && -n "$STORE_PASSWORD" && -n "$KEY_PASSWORD" ]]; then
             printf '%s' "$KEYSTORE" | base64 --decode > android/app/keystore.jks
