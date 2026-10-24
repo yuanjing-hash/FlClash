@@ -366,3 +366,66 @@ Root 侧 status/心跳不等于完整 root-agent Snapshot/事件持久化；可�
 改动留在工作区，建议提交分组与逐组文件清单位于 `out/root-tun-p0-r1-commits.txt`；out 下的日志/工具不作为提交内容。
 runtime.sh 的 B1/B3/M1/M2/M3/M4 共用锁、恢复和停止路径，建议同组提交，避免拆出中间不安全状态。
 正式交付仍需技术负责人复审、完整 APK 编译和上述真机取证；未请求合并 PR。
+
+## PR #33 评审修复
+
+本节对应 `/workspace/flclash-docs/reviews/2026-10-23-pr33.md` 的 M1、M2、N1、N2，
+以本节覆盖上文“首次缺报立即要求清理”及 manifest 原始 bytes 的旧口径。
+工作分支为 `feature/root-tun-p0-followup`，HEAD 保持 `f84902d`；未改 Dart/main，未运行 git add/commit/push。
+
+### M1：首次缺报宽限期与状态边界
+
+- `RootTunController.kt` 的 `ReconciliationPolling` 从首次缺报开始计单调时间，宽限期为 **23s = 15s + MAX_AGE_MS(8s)**。
+  宽限期内只标 stale，保留状态、运行时间等字段，不生成错误码或 code 事件；新鲜回报重置宽限期和降频计时。
+  连续缺报 30s 后每 30s 核对一次的 S1 降频仍保留，Magisk 后台核对不调用 su。
+- `RootReconciliation.kt` 统一缺报状态转换：期满后只有最后状态为 STARTING/RUNNING/RECOVERING/STOPPING 才升级为
+  stopping+CLEANUP_FAILED；DISABLED 及已清理的 FAILED 继续只标 stale，FAILED 的真实失败原因和首次时间保留。
+  授权已知 granted、尚无首份状态时，`checked` 也保留缓存状态，不再立即要求清理。
+- 保留闲置回报 15s，而不改为 ≤8s，以免增加已直连/自启失败后的授权探测与进程开销；活动态仍按 1s 回报。
+  8s 新鲜度上限继续严格执行，因此闲置回报间隙可能显示 stale，但不会合成清理失败；不延长旧 running 回报的可信期限。
+- `RootTunControllerTest.kt` 覆盖冷启 disabled+15s 回报、冷启 running+1s 首报、重启后无 watchdog+disabled，
+  三种均收集并断言没有 CLEANUP_FAILED code 事件；运行中长期缺报在 23s 边界升级，且只发一次该错误事件。
+  `RootReconciliationTest.kt` 覆盖八态的首次缺报、期满状态边界及已清理失败原因保留。
+
+### M2：失败闲置态统一降低授权探测频率
+
+- `assets/root-tun/runtime.sh` 的 `authorization_interval` 在没有 `state/owned` 且 status 匹配 `disabled*|failed*` 时统一为 15s，
+  包括 AUTOSTART_FAILED 和 fail-open 后的 CORE_RECOVERY_FAILED，不再依赖 `run/stop` 标记。
+  有 owned 或尚在 stopping 清理时仍为 1s；与 M1 的 23s 宽限期、8s 新鲜度共同使用。
+- `tests/boot-test.sh` 在真实 bootstrap 的 AUTOSTART_FAILED 结果后断言间隔为 15s；
+  `tests/authorization-test.sh` 补齐无 stop 标记的 disabled/两种 failed 及重新有 owned 时恢复 1s，原调度/撤权时序用例继续通过。
+
+### N1/N2：诊断临时目录与流式截断
+
+- N1：`assets/root-tun/diagnostics.sh` 在 root 身份下覆盖 TMPDIR 为 `$R/tmp`，目录不存在时创建，umask 077 并确保权限 0700；
+  `RootRuntime.kt` 的 root 调用不再传入 App cacheDir，普通身份调用继续使用 cacheDir。
+  `tests/diagnostics-test.sh` 验证 root 已有目录优先、缺失时创建及权限、普通身份使用 App cache，采集不调用 su。
+- N2：移除 `ulimit -f`。每项先以 `head -c 98305` 保存至多 96KiB+1 字节样本，统计后输出至多 98304 字节；
+  多出的一个字节用于准确判定 `truncated=yes`。管道继续排空多余输出直到命令退出或 timeout，防止 SIGPIPE 污染真实退出码。
+  manifest 的 `bytes` 现在是有界样本大小，`bytes=98305 truncated=yes` 表示原输出至少 98305 字节，不再声称是完整原始大小。
+  同一测试补验恰好 96KiB、超过一字节、300000 字节 nft 成功输出、超量且 exit=7、timeout=137，以及 raw/txt 文件大小上限。
+
+### 验收结果（2026-10-24）
+
+| 检查 | 结果 |
+| --- | --- |
+| `sh android/root-tun/tests/run.sh` | **57 条 PASS**，exit 0 |
+| `/tmp/shellcheck-v0.11.0/shellcheck -s sh -x android/app/src/main/assets/root-tun/*.sh android/root-tun/*.sh android/root-tun/tests/*.sh` | **零告警**，exit 0 |
+| `python3 out/compile-native.py` | JVM target 17 编译通过，**40 项 JUnit 通过** |
+| `java -jar out/check-tools/ktlint.jar` 检查本轮改动的 5 个 Kotlin 文件 | **零告警**，exit 0 |
+| `git diff --check` | 通过，exit 0 |
+| 全部 16 个 Shell 脚本 `sh -n`、改动 Kotlin 的 comment-density | 通过 |
+
+日志为 `out/root-tun-p0-followup-3-*.log`。`flutter pub get`、`flutter analyze --no-fatal-infos`、
+Root TUN plugin/provider/view 的 `flutter test` 均已尝试，因 PATH 无 flutter（exit 127）未能执行；Go/cargo 可用，仓库无 Gradle wrapper。
+JVM 使用既有 `out/compile-native.py` 和依赖/桩，不能代替正式 Gradle、APK、CI 或真机验收。
+
+### 后续项与真机验证
+
+- **N3**：本轮不改 watchdog 主循环 0.25s；需要真机比较活动/闲置状态下 CPU、fork 次数及功耗。
+- **N4**：本轮不改 `RootPreviousSession`；当前同一 root 会话且 stop:active 时重开 App，仍可能把系统 LMK 回收误判为异常退出。
+  后续结合 `ActivityManager.getHistoricalProcessExitReasons` / `ApplicationExitInfo` 区分 LMK 与强停，当前偏差保留。
+- **N5**：后续按主题拆分 PR；本轮建议提交为 M1、M2、诊断 N1/N2、REPORT 四组，逐组文件与依赖见
+  `out/root-tun-p0-followup-3-commits.txt`，out 下工具与日志不列入提交。
+- **撤权时序**：模拟的 8250ms 和此前 13.75s 软件预算不等于手机实测；至少两种管理器、Android 17/HyperOS 的前台撤权 ≤15s，
+  以及真实授权探测、清理、通知与调度延迟仍须真机验证。冷启首报/闲置 15s、SELinux 下临时目录权限与 KILL 残留也需随 APK 复测。
