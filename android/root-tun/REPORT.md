@@ -190,6 +190,138 @@ JVM 编译仍使用现有 `out/compile-native.py` 的依赖与桩，不能代替
 
 本次未运行 git add/commit/push，未写入 `.git` 或 `~/.codex`；建议提交分组见 `out/root-tun-p0-followup-commits.txt`。
 
+## P0 followup 第二轮
+
+本轮完整阅读 `/workspace/flclash-pm/PRD-v1.md`、`/workspace/flclash-apk/测试清单-P0.md`、
+`/workspace/flclash-docs/qa/p0-diagnostics-answers.md`，在 S1–S3 上继续实现；不修改 `lib/` Dart、`.git` 或 `~/.codex`，不提交、不推送。
+以下为本轮口径，覆盖上文旧的探测时序与诊断限制说明。
+
+### 1. 撤权误报与重复事件
+
+- KernelSU/APatch 状态查询的空输出失败（包括 `127 / Executable unavailable`、明确拒绝和超时）只标记 stale，
+  保留最后核对的状态，等待 root 签名回报；不再因为查询失败调用 App 侧 stop，也不据此生成 `CLEANUP_FAILED`。
+  三种管理器都优先消费新鲜签名回报；Magisk 后台仍完全不查询 su，缺报的 S1 降频行为保留。
+- root 回报的 `stopping ROOT_PERMISSION_REVOKED` 表示正在清理，不映射成 `CLEANUP_FAILED`，
+  也不提前发出宣称已经直连的撤权弹窗。只有 root 确认清理成功后才进入 `failed / ROOT_PERMISSION_REVOKED`，
+  authStatus=revoked、自启关闭；重新检测不把该原因覆盖为“去管理器授权”。真实清理失败仍保留 `stopping / CLEANUP_FAILED`。
+- 同一原生启动会话内按错误码保留首次 `lastErrorAt`，重复错误不重复携带事件 code；显式启动或撤权后重试重置去重。
+  信息类事件仍正常发出。撤权确认提升 intentRevision，使尚未完成的旧操作不能覆盖失败状态或再次启动网络接管。
+- JVM 覆盖 KSU/APatch 查询失败等待回报、签名撤权结果优先、真实 stopping 与失败原因、错误首次时间稳定与新会话重置、
+  撤权确认使旧 revision 失效。**原生去重不能替代 Flutter 的跨页面提示去重，详见下方“需要 Flutter 配合”。**
+
+### 2. LAST_SESSION_ABNORMAL_EXIT（US-07 AC2 / K1）
+
+- root 启动时写入 `state/session`（boot_id + 单调时间），正常停止标记 `session-stop=normal`，
+  错误停止标记 abnormal；运行会话标记经 status 和签名回报携带。看门狗 fail-open 后的 failed 状态保留会话证据。
+- App 在核对到活动会话后保存自己的会话标记。新进程首次获得同一 root 会话的有效回报，且没有正常 stop 记录时，
+  发出 `LAST_SESSION_ABNORMAL_EXIT`，并放入 snapshot.warnings。回报仍为 stale、正在清理或缺少新格式标记时不提前报异常。
+  正常 stop/确认关闭、显式新启动、不同 root 会话不会误报；运行中的 root 会话照实显示 running，已清理的照实显示 failed/关闭。
+  异常退出横幅不会覆盖 `CORE_RECOVERY_FAILED` 等真实失败原因。
+- JVM 覆盖强停后同会话重开、等待核对、仅发一次、正常停止、换会话及看门狗清理后的失败。
+  runtime shell 覆盖会话字段、normal stop，以及 supervisor/core 同失联后 abnormal 标记与规则清理。
+
+### 3. 撤权时序（#29 AC1）
+
+运行中探测间隔由 2s 改为 1s，仍需连续两次明确 denied；unknown/超时重置确认计数，不当撤权。
+管理器查询与 App 签名交互并行，各自总预算 1s。活动 watchdog 每 250ms 消费结果；proxyStop 后仍按 S3 每 15s 探测，
+卸载检查仍每 10s。App 的清理确认消费每 250ms 一轮，不等待原有的 5s 限频 su 探测或 operations 锁。
+没有新增 App 授权请求；Magisk 的后台探测和核对始终不调用 su。
+
+撤权清理以独立的 `cleanup-owned` 在同一 owner identity/generation 下运行，单次限时 3s；清理优先级列表每个地址族只读取一次，
+避免原先反复执行 44 组 rule show。超时/清理失败继续保留风险状态并重试，绝不先报“已恢复直连”。
+系统通知异步执行（最多 3s，记录退出码），不阻塞清理结果交接或再次回报。
+
+| 环节 | 典型推算 | 保守软件预算 |
+| --- | --- | --- |
+| 等下一次活动探测 | 0.5s | 1.5s（含循环相位） |
+| 两次明确拒绝、异步结果消费 | 1–1.5s | 3s（含 1s 查询超时边界及调度） |
+| 控制锁竞争/下轮重试 | 通常 0s | 2s |
+| 清理核心、规则与核对 | 1–2s | 3s 单次预算 |
+| 签名清理交接（含一次未送达后的重发） | 通常 <0.1s | 3.5s |
+| App 消费 | 0–0.25s | 0.25s |
+| 文件操作、事件投递余量 | 少量 | 0.5s |
+| 合计：App 显示失败 | 约 3–5s | **13.75s，距 15s 留 1.25s** |
+
+authorization shell 用真实 watchdog 调度/拒绝计数/撤权路径、虚拟时钟模拟最差探测相位、1s 并行慢探测、
+控制锁竞争、3s 清理和 250ms App 消费，结果 **8250ms**；另外运行真实 probe-auth 子进程，
+验证管理器/App 超时并行在 1.8s 内完成、慢管理器仍为 unknown。runtime shell 原有慢心跳与健康检查不误清理用例继续通过。
+
+上表适用于受支持授权格式能在探测预算内给出明确 denied、系统调度正常、清理能成功的前台场景，属于代码预算与模拟，
+不是手机实测值。未知 KernelSU 分支 ABI、连续 unknown、系统进程长时间挂死或真实规则清理失败不伪造撤权成功；
+这些情况下仍保留证据。Android 17/HyperOS 上的实际 ≤15s、强停/cgroup 存活和至少两家管理器仍须真机验收。
+
+### 4. 诊断 zip：12 项补采集与有界输出
+
+所有采集组均通过 POSIX sh 的 timeout 执行（1–3s）；最多 6 组并发，4 批预算约 9s，
+Kotlin 总采集预算由 9s 改为 15s，专用 RootShell 输出上限由 1MiB 改为 4MiB，其他 shell 调用仍为 1MiB。
+每组保留最多 96KiB，先采并输出时钟、开机、授权与撤权留存；日志单项尾部降为 10–16KB，
+22 组加重复的 device/restore 段总输出约束在 2.5MiB 内，给 4MiB 留余量。
+
+| 调查文档 # | 本轮证据 |
+| --- | --- |
+| 1 | date epoch/本地时间、uptime、boot_id，可换算开机秒数与真实时间 |
+| 2 | am 用户状态及前后 uptime/退出码、cmd user 实际输出、CE/boot_completed；boot.log 各阶段 elapsedMs |
+| 3 | grep BRE/ERE 实测输出、退出码、toybox 版本及 grep 路径 |
+| 4 | pm path/list 输出和退出码、数据目录；watchdog 记录非 present 的结果 |
+| 5 | KSU stat/头 8 字节和仅本包 UID 对应 app_profile 的 od 字节；首个 denied 时 root 独立留存 allowlist-denied.txt |
+| 6 | Magisk 本 UID policy/until 原始行、APatch 表头和本包行；不导出其他 App 的授权记录 |
+| 7 | App 最近 64 次 su 调用的时间/类型/退出码/超时/stderr，包括启动可执行文件失败的实际异常；普通身份导出也带入 device.txt |
+| 8 | ps/ps -AZ、上下文、loadavg、运行标记；supervisor 单轮超过 1500ms 写 elapsedMs |
+| 9 | service.d 列表、入口头部/hash、runtime 目录树（只列名）、安全的设置/UID/开关文件、FlClashRoot logcat |
+| 10 | 通知命令 stderr/退出码留存 notification-last.txt 和 boot.log，补 dumpsys notification |
+| 11 | su 采集上下文和 service.d 启动时的独立 service-context.txt；实际测试 timeout、nc -w、od、sha256sum、setsid、硬链接、分数 sleep、diff、sed，列出 awk/cksum 等路径 |
+| 12 | nft list ruleset；缺失或不可用照实写入 manifest |
+
+新增 `manifest.txt`：22 组逐项列 exit、timeout、truncated、原始 bytes，以及 success/partial/failed。
+嵌套命令/文件退出码也保留在证据正文。每批完成即输出证据与完成记录；总超时或中断时，Kotlin 生成缺项为
+`not confirmed` 的 manifest，已经采到的前序内容仍保存。RootShell 即使遇到继承 stdout 的子进程未退出，也保留已读数据。
+扩大的文本暴露了既有 URL 脱敏正则对超长单词的重复扫描，本轮增加词边界，JVM 用 >1MiB 证据验证归档与脱敏能完成。
+
+采集命令不执行 su、不启动授权探测；仅沿用用户显式导出时、已知 granted 下的外层 root 执行方式，
+未授权时以普通身份采集并标出不可读项。普通身份下无法读取 /data/adb，不宣称能突破撤权取证；
+撤权当时的快照由仍有权限的 root watchdog 留存，重新授权后可导出。即使 runtime 已删除，Kotlin 仍携带 APK 内授权采集函数，
+以本 App UID/检测到的管理器采集原始授权证据，不要求先启动 Root TUN。
+不读 app-auth/health.http/核心配置等敏感内容，所有归档文本继续脱敏。
+
+### 5. K7 自启失败通知与延迟重试
+
+- 网络检查最多 **7 次**（首次 + 6 次重试），间隔 **8s**，理想检查时刻为解锁检测后的 0/8/16/24/32/40/48s；
+  共享 48s 依赖预算，随后仍只有 10s 启动预算。包或设置异常同样受预算约束；实际慢命令可能使最后一次检查被预算截掉。
+  网络就绪前不安装规则、不拉核心；预算耗尽后放弃本次自启、写日志，不在网络恢复后无限重试。
+- 配置缺失/不可读或预算耗尽，经清理写入持久 `failed AUTOSTART_FAILED`，root 发送中文系统通知，
+  下次打开 App 可从 root 状态/签名回报恢复，沿用首页已有横幅。启动中超时也会结束旧 supervisor 并清理；
+  已有健康 running 会话不会被重复 bootstrap 的失败处理拆掉。
+- `ROOT_PERMISSION_REVOKED`、`AUTOSTART_ROOT_REVOKED`、`AUTOSTART_FAILED`、`CLEANUP_FAILED` 的 root 通知使用附录 B 中文正文，
+  标题为“FlClash Root TUN 状态提醒”，正文保留括号错误码；命令退出码/stderr 不再吞掉。
+- shell 覆盖 16s 后网络恢复、仅启动一次、7 次耗尽时无启动/无接管、持久失败与通知，以及中文文案、成功/失败退出码。
+  系统通知实际显示/归属与通知权限关系仍须手机确认，退出码 0 不等于用户已看到通知。
+
+### 需要 Flutter 配合
+
+1. **K1 首页横幅无需补代码。** `lib/models/root_tun.dart` 已定义该码，
+   `lib/common/root_tun_labels.dart` 已映射文案，`lib/views/dashboard/widgets/network_takeover.dart:360` 的 bannerCodes
+   已包含 `LAST_SESSION_ABNORMAL_EXIT`，且读取 snapshot.warnings。本轮原生补齐发出逻辑，真机应复测显示与状态一致性。
+   `AUTOSTART_FAILED` 同样已有横幅，K7 不需要新展示分支。
+2. **严格“同一会话同一码只弹一次”仍需 UI 去重键配合。** `lib/views/config/root_tun.dart:94` 目前使用
+   `epoch:lastErrorAt:state:code`，且 `_shownPrompts` 仅存于 widget State。本轮稳定原生首次时间、重复事件去 code，
+   并在清理完成后才发撤权码，已消除本次重复轮询/撤权两阶段造成的重复；但真实错误跨 state、退出再进入设置页或进程重建，
+   仍可能再次弹窗。Flutter 需按 root 会话标识 + code 在 controller/provider 层记录已显示提示，跨页面保留，显式新启动时重置；
+   不应将每次 lastErrorAt 或 state 变化当成新提示。若要精确跨 App 进程区分 root 会话，后续把原生已有 session 标识纳入共享 snapshot，
+   再同步 Dart 模型与 provider 测试；本轮按要求不改 Dart/共享模型。
+3. 按新包复测 QA 的 K1/K2/K3/K5/K7/K9 与所有“待 Android 确认”的采集项；
+   KSU 分支 ABI、Magisk/APatch 真机授权行为、HyperOS 通知归属/权限及 uninstall -k 的验收口径不由宿主模拟替代。
+
+### 本轮验证与交付
+
+- `sh android/root-tun/tests/run.sh`：**53 条 PASS**，包括新增 notification/diagnostics suite；
+  `python3 out/compile-native.py`：**36 项 JUnit 通过**，JVM 17 编译通过。
+- `/tmp/shellcheck-v0.11.0/shellcheck -s sh -x`（全部 Root TUN 资产/构建/测试脚本）：零告警；
+  全部脚本 `sh -n`、ktlint、diff whitespace、comment-density 通过。
+- 已尝试 `flutter pub get`、`flutter analyze --no-fatal-infos`、Root TUN plugin/provider/view/common/model 的 `flutter test`，
+  均因 PATH 无 Flutter 未执行。Go/cargo 可用，本轮无 Go/Rust 改动；仓库无 Gradle wrapper，JVM 桩编译不等于正式 APK/真机证明。
+- 日志统一为 `out/root-tun-p0-followup-2-*.log`。建议提交分组及逐组文件见
+  `out/root-tun-p0-followup-2-commits.txt`；out 内工具/日志不列为提交内容。工作区留待审阅，未运行 git add/commit/push。
+
 ## 文件与验证方式
 
 本轮改动：assets/root-tun/{runtime,authorization}.sh；RootRuntime、RootTunController、RootAuthorization；
