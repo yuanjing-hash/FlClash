@@ -188,6 +188,14 @@ echo 'PASS cleanup retries retain revocation cause and report failed only after 
     printf '%s\n' 'stopping CLEANUP_FAILED' > "$STATE/status"
     [ "$(authorization_interval)" -eq 1 ]
     rm -f "$RUN/stop"
+    for idle_status in 'disabled -' 'failed AUTOSTART_FAILED' 'failed CORE_RECOVERY_FAILED'; do
+        printf '%s\n' "$idle_status" > "$STATE/status"
+        [ "$(authorization_interval)" -eq 15 ]
+        touch "$STATE/owned"
+        [ "$(authorization_interval)" -eq 1 ]
+        rm -f "$STATE/owned"
+    done
+    echo 'PASS unowned disabled and failed states use 15 seconds without requiring a stop marker; owned states stay at 1 second'
     printf '%s\n' 'running -' > "$STATE/status"
     touch "$STATE/owned"
     simulated_time=0

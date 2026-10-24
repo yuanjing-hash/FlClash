@@ -156,3 +156,6 @@ unlock boot
 [ "$(cat "$R/notified")" = AUTOSTART_FAILED ]
 [ "$(cat "$STATE/status")" = 'failed AUTOSTART_FAILED' ]
 echo 'PASS seven offline attempts exhaust budget without network takeover; persistent AUTOSTART_FAILED and notification emitted'
+[ ! -f "$STATE/owned" ]
+[ "$(authorization_interval)" -eq 15 ]
+echo 'PASS AUTOSTART_FAILED watchdog authorization probes use the 15 second idle interval'

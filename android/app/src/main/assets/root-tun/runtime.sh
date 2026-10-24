@@ -823,11 +823,12 @@ stop_probes() {
 }
 
 authorization_interval() {
-    if [ -f "$RUN/stop" ] && [ ! -f "$STATE/owned" ] && [ "$(cat "$STATE/status" 2>/dev/null)" = 'disabled -' ]; then
-        echo 15
-    else
-        echo 1
+    if [ ! -f "$STATE/owned" ]; then
+        case "$(cat "$STATE/status" 2>/dev/null)" in
+            disabled*|failed*) echo 15; return ;;
+        esac
     fi
+    echo 1
 }
 
 watchdog() {
