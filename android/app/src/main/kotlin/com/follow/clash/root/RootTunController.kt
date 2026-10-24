@@ -392,9 +392,7 @@ internal class RootTunController(
         requestId: String? = null,
     ) {
         if (!current(revision)) return
-        reconciliationPolling.missing(SystemClock.elapsedRealtime())
-        val next = staleRuntime(snapshot)
-        if (next != snapshot) publish(next, RootCode.CLEANUP_FAILED, requestId)
+        reconciliationPolling.markStale(snapshot, SystemClock.elapsedRealtime()) { next, code -> publish(next, code, requestId) }
     }
 
     private fun startForegroundService() {
@@ -671,6 +669,7 @@ internal class RootTunController(
                 ?.split(" ") ?: return
         val state = runCatching { TunState.fromWire(fields.first()) }.getOrNull() ?: return
         if (!desiredRunning && state in setOf(TunState.STARTING, TunState.RUNNING, TunState.RECOVERING)) return
+        reconciliationPolling.reset()
         val code =
             fields.getOrNull(1)?.let { runCatching { RootCode.valueOf(it) }.getOrNull() }?.takeUnless {
                 state == TunState.STOPPING && it in setOf(RootCode.ROOT_PERMISSION_REVOKED, RootCode.AUTOSTART_ROOT_REVOKED)
@@ -870,6 +869,19 @@ internal class RootTunController(
         }
 
         @Synchronized
+        fun markStale(
+            previous: RootSnapshot,
+            nowMs: Long,
+            publish: (RootSnapshot, RootCode?) -> Unit,
+        ) {
+            missing(nowMs)
+            val expired = nowMs - checkNotNull(staleSince) >= REPORT_GRACE_MS
+            val next = RootReconciliation.missing(previous, expired)
+            val code = RootCode.CLEANUP_FAILED.takeIf { expired && next.state == TunState.STOPPING }
+            if (next != previous) publish(next, code)
+        }
+
+        @Synchronized
         fun due(nowMs: Long): Boolean {
             missing(nowMs)
             if (nowMs < nextCheckAt) return false
@@ -885,21 +897,14 @@ internal class RootTunController(
         }
 
         companion object {
+            // runtime.sh authorization_interval uses 15s for idle reports; keep their 8s freshness limit separate.
+            const val REPORT_GRACE_MS = 15_000L + RootRuntimeReport.MAX_AGE_MS
             const val STALE_TIMEOUT_MS = 30_000L
             const val SLOW_INTERVAL_MS = 30_000L
         }
     }
 
     companion object {
-        internal fun staleRuntime(previous: RootSnapshot): RootSnapshot =
-            previous.copy(
-                state = TunState.STOPPING,
-                stale = true,
-                lastErrorCode = RootCode.CLEANUP_FAILED.name,
-                startedAt = null,
-                authDeadlineAt = null,
-            )
-
         internal fun monitoredStatus(
             manager: String,
             pushedStatus: String?,

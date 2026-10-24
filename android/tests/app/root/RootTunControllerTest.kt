@@ -26,14 +26,14 @@ class RootTunControllerTest {
         val root = RootStatus("magisk", "granted")
         for (now in listOf(1_000L, 1_000 + RootRuntimeReport.MAX_AGE_MS)) {
             val status = RootTunController.monitoredStatus("magisk", raw, now, query)
-            val checked = RootReconciliation.checked(RootTunController.staleRuntime(previous), root, status)
+            val checked = RootReconciliation.checked(RootReconciliation.missing(previous, graceExpired = true), root, status)
             assertEquals(TunState.RUNNING, checked.state)
             assertFalse(checked.stale)
             assertNull(checked.lastErrorCode)
         }
         for (report in listOf(raw, "running -\nauth:")) {
             assertNull(RootTunController.monitoredStatus("magisk", report, 1_001 + RootRuntimeReport.MAX_AGE_MS, query))
-            val stale = RootTunController.staleRuntime(previous)
+            val stale = RootReconciliation.missing(previous, graceExpired = true)
             assertTrue(stale.stale)
             assertEquals(TunState.STOPPING, stale.state)
             assertEquals(RootCode.CLEANUP_FAILED.name, stale.lastErrorCode)
@@ -45,6 +45,7 @@ class RootTunControllerTest {
     fun missingMagiskReportsBackOffAfterThirtySecondsWithoutSuAndResetOnRecovery() {
         val polling = RootTunController.ReconciliationPolling()
         val checks = mutableListOf<Long>()
+        val events = mutableListOf<RootCode?>()
         var current =
             RootSnapshot(state = TunState.RUNNING, rootTunEnabled = true, mode = "rootTun", rootManager = "magisk", authStatus = "granted")
         var suCalls = 0
@@ -57,7 +58,19 @@ class RootTunControllerTest {
             if (!polling.due(now)) continue
             checks.add(now)
             assertNull(RootTunController.monitoredStatus("magisk", null, now, query))
-            current = RootTunController.staleRuntime(current)
+            polling.markStale(current, now) { next, code ->
+                current = next
+                events.add(code)
+            }
+            if (now < RootTunController.ReconciliationPolling.REPORT_GRACE_MS) {
+                assertEquals(TunState.RUNNING, current.state)
+                assertNull(current.lastErrorCode)
+                assertFalse(RootCode.CLEANUP_FAILED in events)
+            }
+            if (now == RootTunController.ReconciliationPolling.REPORT_GRACE_MS) {
+                assertEquals(TunState.STOPPING, current.state)
+                assertEquals(RootCode.CLEANUP_FAILED.name, current.lastErrorCode)
+            }
             assertFalse(RootTunController.authorizationProbeAllowed(current, runtimeMayExist = true))
         }
         assertEquals((0L..30_000L step 1_000L).toList() + listOf(60_000L, 90_000L), checks)
@@ -65,10 +78,92 @@ class RootTunControllerTest {
         assertTrue(current.stale)
         assertEquals(TunState.STOPPING, current.state)
         assertEquals(RootCode.CLEANUP_FAILED.name, current.lastErrorCode)
+        assertEquals(listOf(null, RootCode.CLEANUP_FAILED), events)
         polling.reset()
         assertTrue(polling.due(95_000))
         assertFalse(polling.due(95_999))
         assertTrue(polling.due(96_000))
+    }
+
+    @Test
+    fun coldDisabledWithFifteenSecondReportsNeverEmitsCleanupFailure() {
+        val polling = RootTunController.ReconciliationPolling()
+        val root = RootStatus("magisk", "granted")
+        var current =
+            RootReconciliation.initial(
+                RootSnapshot(rootManager = root.manager, authStatus = root.auth, mode = "rootTun", rootTunEnabled = true),
+            )
+        val events = mutableListOf<RootCode?>()
+        var raw: String? = null
+        for (now in 0L..60_000L step 1_000L) {
+            if (now > 0 && now % 15_000L == 0L) raw = "disabled -\nbootMs:$now"
+            val status = RootTunController.monitoredStatus(root.manager, raw, now) { error("must not invoke su") }
+            if (status == null) {
+                polling.markStale(current, now) { next, code ->
+                    current = next
+                    events.add(code)
+                }
+            } else {
+                current = RootReconciliation.checked(current, root, status)
+                polling.reset()
+                events.add(current.lastErrorCode?.let(RootCode::valueOf))
+            }
+            assertEquals(TunState.DISABLED, current.state)
+            assertNull(current.lastErrorCode)
+        }
+        assertFalse(current.stale)
+        assertFalse(RootCode.CLEANUP_FAILED in events)
+    }
+
+    @Test
+    fun coldRunningKeepsStateUntilFirstReportWithinOneSecondWithoutCleanupEvent() {
+        val polling = RootTunController.ReconciliationPolling()
+        val persisted = RootSnapshot(state = TunState.RUNNING, rootManager = "magisk", authStatus = "granted", rootTunEnabled = true)
+        var current = RootReconciliation.initial(persisted)
+        val events = mutableListOf<RootCode?>()
+        polling.markStale(current, 0) { next, code ->
+            current = next
+            events.add(code)
+        }
+        assertEquals(TunState.RUNNING, current.state)
+        assertTrue(current.stale)
+        assertNull(current.lastErrorCode)
+        val status = RootTunController.monitoredStatus("magisk", "running -\nbootMs:1000", 1000) { error("must not invoke su") }
+        current = RootReconciliation.checked(current, RootStatus("magisk", "granted"), status)
+        polling.reset()
+        events.add(current.lastErrorCode?.let(RootCode::valueOf))
+        assertEquals(TunState.RUNNING, current.state)
+        assertFalse(current.stale)
+        assertFalse(RootCode.CLEANUP_FAILED in events)
+        polling.markStale(current, 60_000) { next, code ->
+            current = next
+            events.add(code)
+        }
+        assertEquals(TunState.RUNNING, current.state)
+        assertNull(current.lastErrorCode)
+        assertFalse(RootCode.CLEANUP_FAILED in events)
+    }
+
+    @Test
+    fun rebootWithoutWatchdogKeepsDisabledStaleWithoutCleanupEvent() {
+        val polling = RootTunController.ReconciliationPolling()
+        var current =
+            RootReconciliation.initial(
+                RootSnapshot(rootManager = "magisk", authStatus = "granted", mode = "rootTun", rootTunEnabled = true),
+            )
+        val events = mutableListOf<RootCode?>()
+        for (now in 0L..300_000L step 1_000L) {
+            if (!polling.due(now)) continue
+            assertNull(RootTunController.monitoredStatus("magisk", null, now) { error("must not invoke su") })
+            polling.markStale(current, now) { next, code ->
+                current = next
+                events.add(code)
+            }
+            assertEquals(TunState.DISABLED, current.state)
+            assertTrue(current.stale)
+            assertNull(current.lastErrorCode)
+        }
+        assertFalse(RootCode.CLEANUP_FAILED in events)
     }
 
     @Test

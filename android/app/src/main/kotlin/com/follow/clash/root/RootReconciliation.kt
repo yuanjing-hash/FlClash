@@ -6,6 +6,22 @@ internal object RootReconciliation {
     fun initial(persisted: RootSnapshot?): RootSnapshot =
         persisted?.copy(epoch = UUID.randomUUID().toString(), seq = 0, stale = true) ?: RootSnapshot()
 
+    fun missing(
+        cached: RootSnapshot,
+        graceExpired: Boolean = false,
+    ): RootSnapshot =
+        if (graceExpired && cached.state in setOf(TunState.STARTING, TunState.RUNNING, TunState.RECOVERING, TunState.STOPPING)) {
+            cached.copy(
+                state = TunState.STOPPING,
+                stale = true,
+                lastErrorCode = RootCode.CLEANUP_FAILED.name,
+                startedAt = null,
+                authDeadlineAt = null,
+            )
+        } else {
+            cached.copy(stale = true)
+        }
+
     fun checked(
         cached: RootSnapshot,
         root: RootStatus,
@@ -20,6 +36,7 @@ internal object RootReconciliation {
                 ?.firstOrNull()
                 ?.substringBefore(' ')
                 ?.let { runCatching { TunState.fromWire(it) }.getOrNull() }
+        if (runtimeState == null && root.auth == "granted" && !prerequisite) return missing(cached)
         if (status != null && !status.success && runtimeState == null) return cached.copy(stale = true)
         val runtimeCode =
             status
