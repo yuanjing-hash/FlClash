@@ -23,7 +23,7 @@ Android 的「网络」设置在 VPN 区附近显示 Root TUN 开关、开机自
 
 设置页的失败、`CLEANUP_FAILED`、`ROOT_PERMISSION_REVOKED`、`MODE_SWITCH_FAILED` 和 KernelSU/APatch 待授权提示，由 `RootTunController.markPromptShown` 按 **`Snapshot.epoch + code`** 预占并去重。TDD §6.1 将 `epoch` 定义为重装 runtime/重启时更新的会话域；Snapshot 没有独立的 `sessionId`。`seq`、`intentRevision`、状态和错误时间会随同一会话的事件变化，`startedAt` 在授权阶段可能为空、恢复后也可能变化，因此不作为去重键。
 
-沿用 `Preferences`/SharedPreferences 的 `rootTunPromptHistory` 字符串列表，首项是当前 epoch，其余是已提示的协议 code；最多保留当前会话的 27 个已知码，新 epoch 覆盖旧记录。控制层先加载记录再发布快照，弹窗前先在内存预占并等待串行落盘，离开/重进页面和 Flutter 进程重建后仍生效。异步写入期间已换会话或显式重新启动的旧提示会失效。
+沿用 `Preferences`/SharedPreferences 的 `rootTunPromptHistory` 字符串列表，首项是当前 epoch，其余是已提示的协议 code；最多保留当前会话的 27 个已知码，新 epoch 覆盖旧记录。控制层先加载记录再发布快照，弹窗前先在内存预占并等待串行落盘，离开/重进页面，以及同一 epoch 下重新创建 ProviderContainer 后仍生效。当前 Android 的 `RootReconciliation.initial` 在 App 进程冷启时会生成新 epoch，因此强停或系统回收后的重开会清空旧域记录，不能承诺同一个 root 运行时跨 App 进程只弹一次；这需要原生提供跨进程稳定的会话标识。异步写入期间已换会话或显式重新启动的旧提示会失效。
 
 仅用户显式调用 controller `start()`（包括打开设置页开关）清空已提示码，并在发出原生启动命令前保存；后续命令共用这次写入屏障，保证快速 start/stop 的发送顺序，但不等待前一命令的 Ack。被 stale 状态拦截的启动不清空。`refresh`、检测/重新检测、自动恢复、看门狗重启和事件刷新在同一 epoch 内保留记录。K1 的 `LAST_SESSION_ABNORMAL_EXIT` 横幅和 K7 UI 维持原行为。
 
