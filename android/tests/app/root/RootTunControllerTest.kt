@@ -120,6 +120,82 @@ class RootTunControllerTest {
         assertFalse(RootTunController.retryRevoked(RootSnapshot()))
     }
 
+    @Test
+    fun lostSuWaitsForSignedRootCleanupWithoutReportingCleanupFailure() {
+        for (manager in listOf("kernelsu", "apatch")) {
+            val previous = RootSnapshot(state = TunState.RUNNING, rootTunEnabled = true, rootManager = manager, authStatus = "granted")
+            for (failure in listOf(
+                ShellResult(127, "", "Executable unavailable"),
+                ShellResult(1, "", "Permission denied"),
+                ShellResult(-1, "", "", true),
+            )) {
+                assertNull(RootTunController.monitoredStatus(manager, null, 1000) { failure })
+                val pending = RootTunController.unavailableAuthorization(previous)
+                assertEquals(TunState.RUNNING, pending.state)
+                assertTrue(pending.stale)
+                assertNull(pending.lastErrorCode)
+                val raw = "failed ROOT_PERMISSION_REVOKED\nauth:revoked\nautostart:no\nbootMs:1000"
+                val reported = RootTunController.monitoredStatus(manager, raw, 1000) { error("signed report must avoid su") }
+                val checked = RootReconciliation.checked(pending, RootStatus(manager, "notGranted"), reported)
+                assertEquals(TunState.FAILED, checked.state)
+                assertEquals("revoked", checked.authStatus)
+                assertFalse(checked.autostartEnabled)
+                assertFalse(checked.stale)
+                assertEquals(RootCode.ROOT_PERMISSION_REVOKED.name, checked.lastErrorCode)
+                val completed = RootTunController.cleanedRevocation(previous)
+                assertEquals(previous.intentRevision + 1, completed.intentRevision)
+                assertEquals(TunState.FAILED, completed.state)
+                assertEquals("revoked", completed.authStatus)
+                assertFalse(completed.autostartEnabled)
+            }
+        }
+    }
+
+    @Test
+    fun repeatedErrorKeepsOneOccurrenceAcrossStatusRefreshesAndResetsForNewSession() {
+        val occurrences = RootTunController.ErrorOccurrences()
+        val code = RootCode.CLEANUP_FAILED
+        assertEquals(1000L, occurrences.observe(code, 1000).at)
+        assertEquals(1000L, occurrences.observe(code, 2000).at)
+        assertEquals(3000L, occurrences.observe(RootCode.ROOT_PERMISSION_REVOKED, 3000).at)
+        assertEquals(1000L, occurrences.observe(code, 4000).at)
+        assertFalse(occurrences.observe(code, 4000).first)
+        occurrences.reset()
+        assertEquals(5000L, occurrences.observe(code, 5000).at)
+    }
+
+    @Test
+    fun processReopenRequiresMatchingRootSessionAndVerifiedNetworkBeforeAbnormalBanner() {
+        val directory =
+            java.nio.file.Files
+                .createTempDirectory("root-session")
+                .toFile()
+        try {
+            val marker = java.io.File(directory, "session")
+            val running = RootSnapshot(state = TunState.RUNNING, rootTunEnabled = true)
+            val raw = "running -\nsession:boot-session-1\nstop:active"
+            assertFalse(RootPreviousSession(marker).observe(raw, running))
+            val reopened = RootPreviousSession(marker)
+            assertFalse(reopened.observe(raw, running.copy(stale = true)))
+            assertTrue(reopened.observe(raw, running))
+            assertFalse(reopened.observe(raw, running))
+            val failed = running.copy(state = TunState.FAILED, lastErrorCode = RootCode.CORE_RECOVERY_FAILED.name)
+            assertTrue(RootPreviousSession(marker).observe(raw.replace("stop:active", "stop:abnormal"), failed))
+            assertFalse(marker.exists())
+            marker.writeText("boot-session-1")
+            assertFalse(
+                RootPreviousSession(marker).observe(raw.replace("stop:active", "stop:normal"), running.copy(state = TunState.DISABLED)),
+            )
+            marker.writeText("boot-session-1")
+            assertFalse(RootPreviousSession(marker).observe(raw.replace("session-1", "session-2"), running))
+            val normalStop = RootPreviousSession(marker)
+            normalStop.clear()
+            assertFalse(normalStop.observe(raw, running))
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
     @Test(expected = IllegalArgumentException::class)
     fun nonUuidRequestIdIsRejectedBeforeDiagnostics() {
         requireRequestId("not-a-uuid")

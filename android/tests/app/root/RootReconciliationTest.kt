@@ -74,9 +74,9 @@ class RootReconciliationTest {
         assertEquals(RootCode.CLEANUP_FAILED.name, inconsistent.lastErrorCode)
         assertFalse(inconsistent.stale)
         val unavailable = RootReconciliation.checked(cached, granted, ShellResult(-1, "", "", timedOut = true))
-        assertEquals(TunState.AWAITING_AUTH, unavailable.state)
-        assertEquals("notGranted", unavailable.authStatus)
-        assertFalse(unavailable.stale)
+        assertEquals(cached.state, unavailable.state)
+        assertTrue(unavailable.stale)
+        assertNull(unavailable.lastErrorCode)
     }
 
     @Test
@@ -84,6 +84,18 @@ class RootReconciliationTest {
         val checked = RootReconciliation.checked(cached, granted, ShellResult(1, "disabled -\nrestore-diff:yes\nautostart:no", ""))
         assertTrue(RootCode.CLEANUP_FAILED.name in checked.warnings)
         assertFalse(checked.stale)
+    }
+
+    @Test
+    fun rootStoppingRevocationIsNotCleanupFailureAndAutostartFailureSurvivesMissingAppGrant() {
+        val missing = RootStatus("kernelsu", "notGranted")
+        val stopping = RootReconciliation.checked(cached, missing, ShellResult(0, "stopping ROOT_PERMISSION_REVOKED\nbootMs:1000", ""))
+        assertEquals(TunState.STOPPING, stopping.state)
+        assertNull(stopping.lastErrorCode)
+        val failed = RootReconciliation.checked(cached, missing, ShellResult(0, "failed AUTOSTART_FAILED\nbootMs:1000", ""))
+        assertEquals(TunState.FAILED, failed.state)
+        assertEquals(RootCode.AUTOSTART_FAILED.name, failed.lastErrorCode)
+        assertFalse(failed.stale)
     }
 
     @Test

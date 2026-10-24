@@ -1,9 +1,9 @@
 #!/system/bin/sh
 
 manager_authorization() {
-    auth_uid=$(cat "$R/config/app.uid" 2>/dev/null)
+    auth_uid=${1:-$(cat "$R/config/app.uid" 2>/dev/null)}
     case "$auth_uid" in ''|*[!0-9]*) echo unknown; return ;; esac
-    case "$(cat "$R/config/root.manager" 2>/dev/null)" in
+    case "${2:-$(cat "$R/config/root.manager" 2>/dev/null)}" in
         kernelsu) kernelsu_authorization ;;
         magisk)
             magisk_bin=$(command -v magisk) || magisk_bin=''
@@ -42,7 +42,8 @@ kernelsu_authorization() {
     allowlist=/data/adb/ksu/.allowlist
     allow_size=$(stat -c %s "$allowlist" 2>/dev/null) || { echo unknown; return; }
     [ "$allow_size" -ge 8 ] && [ "$allow_size" -le 4194304 ] || { echo unknown; return; }
-    od -An -v -tu1 "$allowlist" > "$R/tmp/allowlist.$$.bytes" 2>/dev/null || { echo unknown; return; }
+    allow_bytes=${TMPDIR:-$R/tmp}/allowlist.$$.bytes
+    od -An -v -tu1 "$allowlist" > "$allow_bytes" 2>/dev/null || { echo unknown; return; }
     # KernelSU disk ABI: v2/v3 records are 776 bytes; v4 adds root_profile.flags.
     awk -v uid="$auth_uid" -v size="$allow_size" '
         function u32(i) { return b[i]+256*b[i+1]+65536*b[i+2]+16777216*b[i+3] }
@@ -60,8 +61,8 @@ kernelsu_authorization() {
                 }
             }
             if (found > 1) print "unknown"; else print found == 1 && allowed ? "granted" : "denied"
-        }' "$R/tmp/allowlist.$$.bytes"
-    rm -f "$R/tmp/allowlist.$$.bytes"
+        }' "$allow_bytes"
+    rm -f "$allow_bytes"
 }
 
 app_authorization() {
@@ -76,7 +77,8 @@ app_authorization() {
     if [ "$(settings get secure always_on_vpn_app 2>/dev/null)" = "$(cat "$R/config/app.package" 2>/dev/null)" ]; then
         runtime_status="$runtime_status|always-on:yes"
     fi
-    runtime_status="$runtime_status|bootMs:$(boot_ms)"
+    session_report=$(runtime_session_report | tr '\n' '|')
+    runtime_status="$runtime_status|${session_report}bootMs:$(boot_ms)"
     status_digest=$(printf '%s:%s:%s' "$auth_token" "$auth_nonce" "$runtime_status" | sha256sum | cut -d' ' -f1)
     reply=$(printf 'probe %s %s %s\n' "$auth_nonce" "$status_digest" "$runtime_status" |
         timeout -s KILL 1 nc -w 1 127.0.0.1 "$auth_port" 2>/dev/null) || { echo unknown; return; }
@@ -93,4 +95,38 @@ notify_app_cleanup() {
     digest=$(printf '%s:%s:%s' "$auth_token" "$auth_nonce" "$1" | sha256sum | cut -d' ' -f1)
     printf 'cleaned %s %s %s\n' "$1" "$auth_nonce" "$digest" |
         timeout -s KILL 1 nc -w 1 127.0.0.1 "$auth_port" >/dev/null 2>&1 || true
+}
+
+runtime_session_report() {
+    printf 'session:%s\nstop:%s\n' "$(cat "$STATE/session" 2>/dev/null)" "$(cat "$STATE/session-stop" 2>/dev/null)"
+}
+
+authorization_evidence() {
+    date +%s
+    cat /proc/uptime /proc/sys/kernel/random/boot_id
+    auth_uid=${1:-$(cat "$R/config/app.uid" 2>/dev/null)}
+    case "$auth_uid" in ''|*[!0-9]*) return 1 ;; esac
+    case "${2:-$(cat "$R/config/root.manager" 2>/dev/null)}" in
+        kernelsu)
+            stat -c '%s %Y' /data/adb/ksu/.allowlist
+            od -An -v -tu1 /data/adb/ksu/.allowlist | awk -v uid="$auth_uid" '
+                function u32(i) {return b[i]+256*b[i+1]+65536*b[i+2]+16777216*b[i+3]}
+                {for(i=1;i<=NF;i++) b[n++]=$i}
+                END {
+                    printf "header:"; for(i=0;i<8 && i<n;i++) printf " %s", b[i]; print "";
+                    v=u32(4); stride=v==4 ? 784 : 776;
+                    if (v<2 || v>4 || (n-8)%stride) {print "unknown ABI"; exit 1}
+                    for(p=8;p<n;p+=stride) {
+                        key=""; for(k=4;k<260 && b[p+k];k++) key=key sprintf("%c",b[p+k]);
+                        if(key=="com.follow.clash.root" && u32(p+260)==uid) {
+                            printf "app-record offset=%s:",p;
+                            for(i=p;i<p+stride;i++) printf " %s",b[i]; print "";
+                        }
+                    }
+                }'
+            ;;
+        magisk) magisk --sqlite "SELECT policy,until FROM policies WHERE uid=$auth_uid;" ;;
+        apatch) sed -n '1p;/^com[.]follow[.]clash[.]root,/p' /data/adb/ap/package_config ;;
+        *) return 1 ;;
+    esac
 }

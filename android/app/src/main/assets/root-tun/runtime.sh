@@ -147,6 +147,10 @@ ensure_watchdog() {
 publish() {
     owns || return 1
     if [ "$1" = running ]; then : > "$R/logs/restore-diff.txt"; fi
+    case "$1" in
+        failed) printf '%s\n' abnormal > "$STATE/session-stop" ;;
+        disabled) printf '%s\n' normal > "$STATE/session-stop" ;;
+    esac
     printf '%s %s\n' "$1" "${2:--}" > "$STATE/status.tmp"
     mv "$STATE/status.tmp" "$STATE/status"
     printf '%s %s %s\n' "$(date +%s)" "$1" "${2:--}" >> "$R/logs/transitions.log"
@@ -325,12 +329,10 @@ cleanup() {
         fi
     done
     for family in -4 -6; do
-        priority=8990
-        while [ "$priority" -le 9011 ]; do
-            while ip "$family" rule show | awk -F: -v p="$priority" '$1 == p {found=1} END {exit !found}'; do
-                ip "$family" rule del pref "$priority" || { cleanup_ok=0; break; }
-            done
-            priority=$((priority + 1))
+        cleanup_rules=$(ip "$family" rule show) || cleanup_ok=0
+        cleanup_priorities=$(printf '%s\n' "$cleanup_rules" | awk -F: '$1 >= 8990 && $1 <= 9011 {print $1}')
+        for priority in $cleanup_priorities; do
+            ip "$family" rule del pref "$priority" || cleanup_ok=0
         done
         ip "$family" route flush table 2022 2>/dev/null || true
     done
@@ -428,6 +430,7 @@ supervise() {
         fi
         final_code=''
         while owns && [ ! -f "$RUN/stop" ]; do
+            round_started=$(boot_ms)
             heartbeat supervisor
             ensure_watchdog
             now=$(boot_seconds)
@@ -485,6 +488,8 @@ supervise() {
                 break
             fi
             update_private_dns || { final_code=DNS_TAKEOVER_FAILED; break; }
+            round_elapsed=$(($(boot_ms) - round_started))
+            if [ "$round_elapsed" -gt 1500 ]; then runtime_log supervisor "slow round elapsedMs=$round_elapsed"; fi
             sleep 1
         done
         publish stopping "${final_code:--}"
@@ -556,6 +561,7 @@ uninstall_runtime() {
 }
 
 record_package_status() {
+    if [ "$1" != present ]; then runtime_log watchdog "package_status=$1"; fi
     case "$1" in
         absent) missing_count=$((missing_count + 1)) ;;
         *) missing_count=0 ;;
@@ -579,16 +585,74 @@ write_settings() {
         mv "$R/config/settings.json.tmp" "$R/config/settings.json"
 }
 
+post_notification() {
+    case "$1" in
+        ROOT_PERMISSION_REVOKED) notification_text='root 授权已被撤销，Root TUN 已停止，网络已恢复直连。' ;;
+        AUTOSTART_ROOT_REVOKED) notification_text='开机自启失败：root 授权已被撤销，网络保持直连。' ;;
+        AUTOSTART_FAILED) notification_text='开机自启未成功（网络未就绪或配置不可读），网络保持直连。' ;;
+        CLEANUP_FAILED) notification_text='清理 Root TUN 规则未完全成功，可能影响上网。' ;;
+        *) return 1 ;;
+    esac
+    notification_exit=0
+    timeout -s KILL 3 cmd notification post -t 'FlClash Root TUN 状态提醒' flclash-root \
+        "$notification_text ($1)" > "$R/logs/notification-last.txt" 2>&1 || notification_exit=$?
+    runtime_log boot "notification code=$1 exit=$notification_exit"
+    printf 'code=%s exit=%s\n' "$1" "$notification_exit" >> "$R/logs/notification-last.txt"
+}
+
 boot_failure() {
     runtime_log boot "$1"
-    lock control || return 1
-    if ! fresh supervisor && claim_owner; then
+    wait_control || return 1
+    if fresh supervisor && [ "$(cut -d' ' -f1 "$STATE/status" 2>/dev/null)" = running ]; then unlock control; return 0; fi
+    touch "$RUN/stop"
+    if alive "$RUN/supervisor.pid"; then kill -KILL "$recorded_pid"; fi
+    if claim_owner; then
         publish stopping "$1"
-        if cleanup; then publish failed "$1"; else publish stopping CLEANUP_FAILED; fi
+        if cleanup_bounded; then
+            publish failed "$1"
+            unlock owner
+            unlock control
+            post_notification "$1"
+            ensure_watchdog
+            return 0
+        else publish stopping CLEANUP_FAILED; fi
         unlock owner
     fi
     unlock control
+    ensure_watchdog
 }
+
+boot_stage() {
+    stage_now=$(boot_ms)
+    runtime_log boot "stage=$1 uptimeMs=$stage_now elapsedMs=$((stage_now - stage_started))"
+    stage_started=$stage_now
+}
+
+context_tools() (
+    id
+    cat /proc/self/attr/current
+    for tool in timeout nc od sha256sum cksum setsid ln sleep diff sed awk; do
+        printf '%s: ' "$tool"
+        command -v "$tool" || echo MISSING
+    done
+    ls -l /system/bin/awk || true
+    timeout -s KILL 1 nc -w 1 127.0.0.1 1 </dev/null
+    printf 'nc-w-exit=%s\n' "$?"
+    printf x | od -An -tu1
+    printf x | sha256sum
+    timeout -s KILL 1 setsid sh -c ':'
+    printf 'setsid-exit=%s\n' "$?"
+    sleep 0.1 && echo sleep-frac-ok
+    printf x | sed -E 's/x+/y/'
+    tools_dir=$R/tmp/tools.$$
+    mkdir "$tools_dir" || exit 1
+    trap 'rm -rf "$tools_dir"' EXIT
+    printf 'a\n' > "$tools_dir/a"
+    printf 'b\n' > "$tools_dir/b"
+    ln "$tools_dir/a" "$tools_dir/link" && echo hardlink-ok
+    diff -u "$tools_dir/a" "$tools_dir/b"
+    printf 'diff-exit=%s\n' "$?"
+)
 
 autostart_requested() {
     if [ ! -f "$R/config/settings.json" ]; then
@@ -622,17 +686,23 @@ bootstrap() {
     prune_boot_markers
     trap 'unlock boot' EXIT
     trap 'exit 0' TERM INT HUP
+    stage_started=$(boot_ms)
+    /system/bin/sh "$R/scripts/runtime.sh" context-tools > "$R/logs/service-context.txt" 2>&1 &
     boot_deadline=$(($(boot_seconds) + 120))
     while [ "$(getprop sys.boot_completed)" != 1 ]; do
         if [ "$(boot_seconds)" -ge "$boot_deadline" ]; then boot_failure AUTOSTART_FAILED; return 1; fi
         sleep 2
     done
+    boot_stage boot_completed
     unlock_deadline=$(($(boot_seconds) + 300))
     while ! user_unlocked; do
         if [ "$(boot_seconds)" -ge "$unlock_deadline" ]; then boot_failure AUTOSTART_FAILED; return 1; fi
         sleep 2
     done
-    dependency_deadline=$(($(boot_seconds) + 50))
+    boot_stage user_unlocked
+    dependency_deadline=$(($(boot_seconds) + 48))
+    network_attempt=0
+    next_network_check=0
     missing_count=0
     next_package_check=0
     while :; do
@@ -650,10 +720,18 @@ bootstrap() {
                 2) boot_failure AUTOSTART_FAILED; return 1 ;;
             esac
         fi
-        if [ "$package" = present ] && ip -4 route show table all | grep -E '^default .* (via|dev) |^default (via|dev) ' | grep -v flcrtun0 >/dev/null; then break; fi
+        if [ "$now" -ge "$next_network_check" ]; then
+            network_attempt=$((network_attempt + 1))
+            next_network_check=$((now + 8))
+            runtime_log boot "network attempt=$network_attempt/7 uptime=$now"
+            if [ "$package" = present ] && timeout -s KILL 1 ip -4 route show table all |
+                grep -E '^default .* (via|dev) |^default (via|dev) ' | grep -v flcrtun0 >/dev/null; then break; fi
+            if [ "$network_attempt" -ge 7 ]; then boot_failure AUTOSTART_FAILED; return 1; fi
+        fi
         if [ "$now" -ge "$dependency_deadline" ]; then boot_failure AUTOSTART_FAILED; return 1; fi
-        sleep 2
+        sleep 1
     done
+    boot_stage dependencies
     [ "$(cat "$RUN/boot-id" 2>/dev/null)" != "$BOOT" ] || return 0
     case "$(manager_authorization)" in
         granted) ;;
@@ -670,13 +748,17 @@ bootstrap() {
     while [ "$(boot_seconds)" -lt "$start_deadline" ]; do
         [ "$(cat "$STATE/auth-status" 2>/dev/null)" != revoked ] || return 1
         case "$(cat "$STATE/status" 2>/dev/null)" in
-            running*) runtime_log boot 'autostart running'; return 0 ;;
+            running*) boot_stage running; runtime_log boot 'autostart running'; return 0 ;;
             starting*|recovering*) saw_start=1 ;;
             failed*) if [ "$saw_start" -eq 1 ]; then boot_failure AUTOSTART_FAILED; return 1; fi ;;
         esac
         sleep 1
     done
     boot_failure AUTOSTART_FAILED
+}
+
+cleanup_bounded() {
+    timeout -s KILL 3 /system/bin/sh "$R/scripts/runtime.sh" cleanup-owned "$IDENTITY" "$generation"
 }
 
 revoke_runtime() {
@@ -687,14 +769,14 @@ revoke_runtime() {
     if alive "$RUN/supervisor.pid"; then kill -KILL "$recorded_pid"; fi
     if ! claim_owner; then unlock control; return 1; fi
     publish stopping "$1"
-    if cleanup && remove_entry; then
+    if cleanup_bounded && remove_entry; then
         echo 0 > "$R/config/autostart-enabled"
         write_settings
         printf '%s\n' revoked > "$STATE/auth-status"
         [ -f "$STATE/revoked-since" ] || boot_seconds > "$STATE/revoked-since"
         publish failed "$1"
         runtime_log watchdog "$1 cleanup complete"
-        cmd notification post -t 'FlClash Root TUN' flclash-root "$1" >/dev/null 2>&1 || true
+        post_notification "$1" &
         notify_app_cleanup "$1"
         if ! alive "$RUN/watchdog.pid"; then detach watchdog; fi
         result=0
@@ -710,7 +792,12 @@ revoke_runtime() {
 record_authorization() {
     manager_auth=$1
     case "$manager_auth" in
-        denied) denied_count=$((denied_count + 1)) ;;
+        denied)
+            denied_count=$((denied_count + 1))
+            if [ "$denied_count" -eq 1 ]; then
+                /system/bin/sh "$R/scripts/runtime.sh" retain-auth-evidence </dev/null >/dev/null 2>&1 &
+            fi
+            ;;
         *) denied_count=0 ;;
     esac
     app_auth=$2
@@ -739,7 +826,7 @@ authorization_interval() {
     if [ -f "$RUN/stop" ] && [ ! -f "$STATE/owned" ] && [ "$(cat "$STATE/status" 2>/dev/null)" = 'disabled -' ]; then
         echo 15
     else
-        echo 2
+        echo 1
     fi
 }
 
@@ -754,7 +841,7 @@ watchdog() {
     missing_count=0
     denied_count=0
     next_auth_check=0
-    auth_check_interval=2
+    auth_check_interval=1
     next_package_check=0
     while :; do
         heartbeat watchdog
@@ -773,7 +860,7 @@ watchdog() {
             read -r result_id manager_result app_result < "$RUN/auth.result"
             rm -f "$RUN/auth.result"
             if [ "$result_id" = "$(cat "$RUN/auth-probe.id" 2>/dev/null)" ] &&
-                [ "$(cat "$STATE/auth-status" 2>/dev/null)" != revoked ]; then record_authorization "$manager_result" "$app_result"; fi
+                [ "$(cat "$STATE/auth-status" 2>/dev/null)" != revoked ]; then record_authorization "$manager_result" "$app_result" || true; fi
         fi
         if [ "$(boot_seconds)" -ge "$next_package_check" ]; then
             next_package_check=$(($(boot_seconds) + 10))
@@ -840,7 +927,7 @@ watchdog() {
             orphan_since=0
         fi
         rotate_log watchdog
-        sleep 1
+        sleep 0.25
     done
 }
 
@@ -871,16 +958,44 @@ safe_tree || exit 1
 . "$R/scripts/authorization.sh"
 IDENTITY="$$ $(ticks "$$") $BOOT"
 case "${1:-}" in
+    cleanup-owned)
+        IDENTITY=$2
+        generation=$3
+        cleanup
+        ;;
     probe-package)
         printf '%s %s\n' "$2" "$(package_status)" > "$RUN/package.result.$$"
         mv "$RUN/package.result.$$" "$RUN/package.result"
         ;;
+    context-tools) timeout -s KILL 4 /system/bin/sh "$R/scripts/runtime.sh" tools-inner ;;
+    tools-inner) context_tools ;;
+    auth-evidence)
+        timeout -s KILL 2 /system/bin/sh "$R/scripts/runtime.sh" auth-evidence-inner
+        ;;
+    auth-evidence-inner)
+        authorization_evidence
+        ;;
+    retain-auth-evidence)
+        timeout -s KILL 2 /system/bin/sh "$R/scripts/runtime.sh" auth-evidence-inner > "$R/logs/allowlist-denied.$$.tmp" 2>&1
+        printf 'collector-exit=%s\n' "$?" >> "$R/logs/allowlist-denied.$$.tmp"
+        mv "$R/logs/allowlist-denied.$$.tmp" "$R/logs/allowlist-denied.txt"
+        ;;
+    probe-manager) manager_authorization ;;
+    probe-app) app_authorization ;;
     probe-auth)
         if [ "$(cat "$STATE/auth-status" 2>/dev/null)" = revoked ]; then
             notify_app_cleanup "$(cut -d' ' -f2 "$STATE/status")"
             exit 0
         fi
-        printf '%s %s %s\n' "$2" "$(manager_authorization)" "$(app_authorization)" > "$RUN/auth.result.$$"
+        timeout -s KILL 1 /system/bin/sh "$R/scripts/runtime.sh" probe-app > "$RUN/app-verdict.$$" &
+        app_probe_pid=$!
+        manager_result=$(timeout -s KILL 1 /system/bin/sh "$R/scripts/runtime.sh" probe-manager) || manager_result=unknown
+        wait "$app_probe_pid" || true
+        app_result=$(cat "$RUN/app-verdict.$$" 2>/dev/null) || app_result=unknown
+        rm -f "$RUN/app-verdict.$$"
+        case "$manager_result" in granted|denied|unknown) ;; *) manager_result=unknown ;; esac
+        case "$app_result" in granted|revoked|unknown) ;; *) app_result=unknown ;; esac
+        printf '%s %s %s\n' "$2" "$manager_result" "$app_result" > "$RUN/auth.result.$$"
         mv "$RUN/auth.result.$$" "$RUN/auth.result"
         ;;
     boot) detach bootstrap ;;
@@ -890,6 +1005,8 @@ case "${1:-}" in
         if ! wait_control; then exit 1; fi
         if fresh supervisor; then ensure_watchdog; unlock control; exit 0; fi
         printf '%s\n' "$BOOT" > "$RUN/boot-id.tmp" && mv "$RUN/boot-id.tmp" "$RUN/boot-id"
+        printf '%s-%s\n' "$BOOT" "$(boot_ms)" > "$STATE/session"
+        printf '%s\n' active > "$STATE/session-stop"
         rm -f "$RUN/stop" "$STATE/auth-status" "$STATE/revocation-code" "$STATE/revoked-since" "$RUN/adopt-deadline"
         if [ ! -f "$STATE/owned" ]; then rm -f "$RUN/crash-times"; fi
         if [ -d "$RUN/owner.lock" ] && [ ! -f "$RUN/generation" ] && core_healthy; then
@@ -920,6 +1037,7 @@ case "${1:-}" in
         ;;
     status)
         cat "$STATE/status" 2>/dev/null || echo disabled
+        runtime_session_report
         printf 'bootMs:%s\n' "$(boot_ms)"
         printf 'auth:%s\n' "$(cat "$STATE/auth-status" 2>/dev/null)"
         printf 'dns:%s\n' "$(cat "$STATE/private-dns" 2>/dev/null)"

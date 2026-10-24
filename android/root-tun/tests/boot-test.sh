@@ -10,10 +10,14 @@ sed -e "s|^R=/data/adb/flclash-root$|R=$WORK/runtime|" \
 . "$WORK/functions.sh"
 IDENTITY="$$ $(ticks "$$") $BOOT"
 export IDENTITY
-mkdir -p "$RUN" "$STATE" "$R/logs" "$R/config" "$R/bin" "$R/scripts"
+mkdir -p "$RUN" "$STATE" "$R/logs" "$R/config" "$R/bin" "$R/scripts" "$R/tmp"
 FAKE_NOW=0
 boot_seconds() { cat "$R/clock"; }
-sleep() { FAKE_NOW=$((FAKE_NOW + $1)); echo "$FAKE_NOW" > "$R/clock"; }
+sleep() {
+    FAKE_NOW=$((FAKE_NOW + $1))
+    echo "$FAKE_NOW" > "$R/clock"
+    if [ "${NETWORK_READY_AT:-0}" -gt 0 ] && [ "$FAKE_NOW" -ge "$NETWORK_READY_AT" ]; then rm -f "$R/network-offline"; fi
+}
 echo 0 > "$R/clock"
 getprop() {
     case "$1" in
@@ -38,8 +42,15 @@ export PATH="$WORK:$PATH" R
 ensure_watchdog() { return 0; }
 package_status() { echo present; }
 cleanup() { return 0; }
-ip() { echo 'default via 192.0.2.1 dev wlan0 table 1001'; }
-ip >/dev/null
+cleanup_bounded() { cleanup; }
+post_notification() { printf '%s\n' "$1" >> "$R/notified"; }
+context_tools() { return 0; }
+cat > "$WORK/ip" <<'IP'
+#!/bin/sh
+[ ! -f "$R/network-offline" ] || exit 0
+echo 'default via 192.0.2.1 dev wlan0 table 1001'
+IP
+chmod +x "$WORK/ip"
 manager_authorization() { echo granted; }
 printf 1 > "$R/config/root-tun-enabled"
 printf 1 > "$R/config/autostart-enabled"
@@ -49,6 +60,7 @@ printf '#!/bin/sh\nexit 0\n' > "$CORE"
 chmod +x "$CORE"
 cat > "$R/scripts/runtime.sh" <<'START'
 #!/bin/sh
+[ "$1" = start ] || exit 0
 printf '%s\n' start >> "$(dirname "$0")/../starts"
 printf '%s\n' 'running -' > "$(dirname "$0")/../state/status"
 START
@@ -89,14 +101,12 @@ echo 'PASS boot_completed wait is bounded'
 BOOT_COMPLETE=1
 printf 1 > "$R/config/root-tun-enabled"
 write_settings
-ip() { return 0; }
-ip >/dev/null
+touch "$R/network-offline"
 if bootstrap; then exit 1; fi
 unlock boot
-[ "$FAKE_NOW" -eq 170 ]
-echo 'PASS dependency wait has 50 second budget'
-ip() { echo 'default via 192.0.2.1 dev wlan0'; }
-ip >/dev/null
+[ "$FAKE_NOW" -eq 168 ]
+echo 'PASS dependency wait has 48 second budget; seven checks at eight second intervals'
+rm -f "$R/network-offline"
 rm -f "$RUN/boot-id"
 FAKE_NOW=0
 echo 0 > "$R/clock"
@@ -119,3 +129,30 @@ unlock boot
 [ "$FAKE_NOW" -eq 300 ]
 grep -q 'failed AUTOSTART_FAILED' "$STATE/status"
 echo 'PASS failed am and getprop time out with AUTOSTART_FAILED'
+
+export AM_STATE=RUNNING_UNLOCKED CE_AVAILABLE=true
+rm -f "$RUN/boot-id" "$R/starts" "$R/notified" "$R/logs/boot.log"
+FAKE_NOW=0
+echo 0 > "$R/clock"
+NETWORK_READY_AT=16
+touch "$R/network-offline"
+bootstrap
+unlock boot
+[ "$FAKE_NOW" -eq 16 ]
+[ "$(grep -c 'network attempt=' "$R/logs/boot.log")" -eq 3 ]
+[ "$(wc -l < "$R/starts")" -eq 1 ]
+[ ! -f "$R/notified" ]
+echo 'PASS delayed network readiness retries at 0/8/16 seconds and starts exactly once without a failure notification'
+NETWORK_READY_AT=0
+FAKE_NOW=0
+echo 0 > "$R/clock"
+rm -f "$RUN/boot-id" "$R/starts" "$R/logs/boot.log"
+touch "$R/network-offline"
+if bootstrap; then exit 1; fi
+unlock boot
+[ "$FAKE_NOW" -eq 48 ]
+[ "$(grep -c 'network attempt=' "$R/logs/boot.log")" -eq 7 ]
+[ ! -f "$R/starts" ]
+[ "$(cat "$R/notified")" = AUTOSTART_FAILED ]
+[ "$(cat "$STATE/status")" = 'failed AUTOSTART_FAILED' ]
+echo 'PASS seven offline attempts exhaust budget without network takeover; persistent AUTOSTART_FAILED and notification emitted'

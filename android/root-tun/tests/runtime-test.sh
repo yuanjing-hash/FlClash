@@ -7,6 +7,12 @@ export FAKE_NET="$WORK/net"
 mkdir -p "$FAKE_NET" "$WORK/bin"
 TEST_PIDS=''
 finish() {
+    test_result=$?
+    if [ "$test_result" -ne 0 ]; then
+        for failed_log in "$WORK/runtime/logs/"*.log; do
+            [ ! -f "$failed_log" ] || tail -n 40 "$failed_log" >&2
+        done
+    fi
     for test_pid in $TEST_PIDS; do kill "$test_pid" 2>/dev/null || true; done
     if [ -d "$WORK/runtime/run" ]; then
         for pid_file in "$WORK/runtime/run/"*.pid; do
@@ -60,6 +66,10 @@ stopped() { [ ! -f "$R/run/watchdog.pid" ] && [ ! -f "$R/run/supervisor.pid" ] &
 run start
 wait_for ready
 status=$(run status)
+grep -q '^session:.' <<EOF
+$status
+EOF
+[ "$(cat "$R/state/session-stop")" = active ]
 report_ms=$(printf '%s\n' "$status" | sed -n 's/^bootMs://p')
 case "$report_ms" in ''|*[!0-9]*) exit 1 ;; esac
 echo 'PASS runtime status includes bootMs'
@@ -127,6 +137,8 @@ if grep -E '(-D OUTPUT|-X FCR_OUTPUT|rule del|route flush|link delete)' "$FAKE_N
 echo 'PASS core recovery preserves takeover and leak protection'
 kill -KILL "$supervisor" "$core"
 wait_for grep -q "failed CORE_RECOVERY_FAILED" "$R/state/status"
+[ "$(cat "$R/state/session-stop")" = abnormal ]
+echo 'PASS root session preserves abnormal exit after watchdog fail-open cleanup'
 [ ! -f "$R/state/owned" ] && [ ! -f "$FAKE_NET/tun" ]
 [ ! -s "$R/logs/restore-diff.txt" ]
 echo 'PASS supervisor and core loss cleans network'
@@ -140,6 +152,7 @@ TEST_PIDS="$TEST_PIDS $boot_pid"
 boot_ticks=$(sed 's/.*) //' "/proc/$boot_pid/stat" | awk '{print $20}')
 printf '%s %s %s\n' "$boot_pid" "$boot_ticks" "$(cat /proc/sys/kernel/random/boot_id)" > "$R/run/boot.lock"
 run stop
+[ "$(cat "$R/state/session-stop")" = normal ]
 wait "$boot_pid" 2>/dev/null || true
 wait_for test ! -f "$R/run/supervisor.pid"
 [ ! -f "$R/run/core.pid" ] && [ -f "$R/run/watchdog.pid" ]
