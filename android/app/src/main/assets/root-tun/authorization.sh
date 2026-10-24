@@ -76,6 +76,7 @@ app_authorization() {
     if [ "$(settings get secure always_on_vpn_app 2>/dev/null)" = "$(cat "$R/config/app.package" 2>/dev/null)" ]; then
         runtime_status="$runtime_status|always-on:yes"
     fi
+    runtime_status="$runtime_status|bootMs:$(boot_ms)"
     status_digest=$(printf '%s:%s:%s' "$auth_token" "$auth_nonce" "$runtime_status" | sha256sum | cut -d' ' -f1)
     reply=$(printf 'probe %s %s %s\n' "$auth_nonce" "$status_digest" "$runtime_status" |
         timeout -s KILL 1 nc -w 1 127.0.0.1 "$auth_port" 2>/dev/null) || { echo unknown; return; }

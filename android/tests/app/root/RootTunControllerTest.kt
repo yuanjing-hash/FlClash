@@ -10,11 +10,65 @@ class RootTunControllerTest {
     @Test
     fun magiskStatusPollingUsesOnlyRootReportedFiles() {
         val query = { error("Magisk background polling must not invoke su") }
-        assertNull(RootTunController.monitoredStatus("magisk", null, query))
-        val status = "failed ROOT_PERMISSION_REVOKED\nauth:revoked"
-        assertEquals(status, RootTunController.monitoredStatus("magisk", status, query)?.stdout)
+        assertNull(RootTunController.monitoredStatus("magisk", null, 1_000, query))
+        val status = "failed ROOT_PERMISSION_REVOKED\nauth:revoked\nbootMs:1000"
+        assertEquals(status, RootTunController.monitoredStatus("magisk", status, 1_000, query)?.stdout)
         val result = ShellResult(0, "running -", "")
-        assertEquals(result, RootTunController.monitoredStatus("kernelsu", null) { result })
+        assertEquals(result, RootTunController.monitoredStatus("kernelsu", null, 1_000) { result })
+    }
+
+    @Test
+    fun freshReportReconcilesRunningButExpiredAndLegacyReportsRequireInspection() {
+        val previous =
+            RootSnapshot(state = TunState.RUNNING, rootTunEnabled = true, mode = "rootTun", rootManager = "magisk", authStatus = "granted")
+        val raw = "running -\nauth:\nbootMs:1000"
+        val query = { error("Magisk background polling must not invoke su") }
+        val root = RootStatus("magisk", "granted")
+        for (now in listOf(1_000L, 1_000 + RootRuntimeReport.MAX_AGE_MS)) {
+            val status = RootTunController.monitoredStatus("magisk", raw, now, query)
+            val checked = RootReconciliation.checked(RootTunController.staleRuntime(previous), root, status)
+            assertEquals(TunState.RUNNING, checked.state)
+            assertFalse(checked.stale)
+            assertNull(checked.lastErrorCode)
+        }
+        for (report in listOf(raw, "running -\nauth:")) {
+            assertNull(RootTunController.monitoredStatus("magisk", report, 1_001 + RootRuntimeReport.MAX_AGE_MS, query))
+            val stale = RootTunController.staleRuntime(previous)
+            assertTrue(stale.stale)
+            assertEquals(TunState.STOPPING, stale.state)
+            assertEquals(RootCode.CLEANUP_FAILED.name, stale.lastErrorCode)
+            assertEquals("granted", stale.authStatus)
+        }
+    }
+
+    @Test
+    fun missingMagiskReportsBackOffAfterThirtySecondsWithoutSuAndResetOnRecovery() {
+        val polling = RootTunController.ReconciliationPolling()
+        val checks = mutableListOf<Long>()
+        var current =
+            RootSnapshot(state = TunState.RUNNING, rootTunEnabled = true, mode = "rootTun", rootManager = "magisk", authStatus = "granted")
+        var suCalls = 0
+        val query = {
+            suCalls++
+            ShellResult(0, "running -", "")
+        }
+        polling.missing(0)
+        for (now in 0L..95_000L step 1_000L) {
+            if (!polling.due(now)) continue
+            checks.add(now)
+            assertNull(RootTunController.monitoredStatus("magisk", null, now, query))
+            current = RootTunController.staleRuntime(current)
+            assertFalse(RootTunController.authorizationProbeAllowed(current, runtimeMayExist = true))
+        }
+        assertEquals((0L..30_000L step 1_000L).toList() + listOf(60_000L, 90_000L), checks)
+        assertEquals(0, suCalls)
+        assertTrue(current.stale)
+        assertEquals(TunState.STOPPING, current.state)
+        assertEquals(RootCode.CLEANUP_FAILED.name, current.lastErrorCode)
+        polling.reset()
+        assertTrue(polling.due(95_000))
+        assertFalse(polling.due(95_999))
+        assertTrue(polling.due(96_000))
     }
 
     @Test

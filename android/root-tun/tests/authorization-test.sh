@@ -72,6 +72,30 @@ mv "$WORK/ap/next" "$WORK/ap/package_config"
 echo malformed > "$WORK/ap/package_config"
 [ "$(manager_authorization)" = unknown ]
 echo 'PASS APatch exact package/UID grant/revoke and unknown format'
+# shellcheck disable=SC2329
+(
+    mkdir "$WORK/status-bin"
+    cat > "$WORK/status-bin/nc" <<'NC'
+#!/bin/sh
+cat > "$FAKE_NET/status-probe"
+NC
+    chmod +x "$WORK/status-bin/nc"
+    PATH="$WORK/status-bin:$PATH"
+    printf '%s\n' '12345 test-token' > "$R/config/app-auth"
+    printf '%s\n' 'running -' > "$STATE/status"
+    : > "$STATE/auth-status"
+    printf '%s\n' off > "$STATE/private-dns"
+    printf '%s\n' com.follow.clash.root > "$R/config/app.package"
+    boot_ms() { echo 123456; }
+    [ "$(app_authorization)" = unknown ]
+    read -r operation nonce signature payload < "$FAKE_NET/status-probe"
+    [ "$operation" = probe ]
+    case "$payload" in running\ -*'|bootMs:123456') ;; *) exit 1 ;; esac
+    expected=$(printf '%s:%s:%s' test-token "$nonce" "$payload" | sha256sum | cut -d' ' -f1)
+    [ "$signature" = "$expected" ]
+)
+rm -f "$STATE/auth-status"
+echo 'PASS signed runtime report includes bootMs in the authenticated payload'
 denied_count=0
 record_authorization denied unknown
 [ "$denied_count" -eq 1 ]
@@ -119,6 +143,51 @@ rm -f "$FAKE_NET/block-cleanup"
 revoke_runtime "$(cat "$STATE/revocation-code")"
 [ "$(cat "$STATE/status")" = 'failed ROOT_PERMISSION_REVOKED' ]
 echo 'PASS cleanup retries retain revocation cause and report failed only after rules are gone'
+# shellcheck disable=SC2329
+(
+    rm -f "$STATE/auth-status" "$STATE/revocation-code" "$RUN/stop"
+    printf '%s\n' 'running -' > "$STATE/status"
+    touch "$STATE/owned"
+    [ "$(authorization_interval)" -eq 2 ]
+    touch "$RUN/stop"
+    [ "$(authorization_interval)" -eq 2 ]
+    rm -f "$STATE/owned"
+    printf '%s\n' 'stopping CLEANUP_FAILED' > "$STATE/status"
+    [ "$(authorization_interval)" -eq 2 ]
+    rm -f "$RUN/stop"
+    printf '%s\n' 'running -' > "$STATE/status"
+    touch "$STATE/owned"
+    simulated_time=0
+    boot_seconds() { echo "$simulated_time"; }
+    heartbeat() { return 0; }
+    fresh() { return 0; }
+    start_probe() {
+        [ "$1" != auth ] || printf '%s\n' "$simulated_time" >> "$WORK/auth-checks"
+    }
+    sleep() {
+        simulated_time=$((simulated_time + 1))
+        case "$simulated_time" in
+            5)
+                touch "$RUN/stop"
+                rm -f "$STATE/owned"
+                printf '%s\n' 'disabled -' > "$STATE/status"
+                ;;
+            35)
+                rm -f "$RUN/stop"
+                touch "$STATE/owned"
+                printf '%s\n' 'running -' > "$STATE/status"
+                ;;
+            40) exit 0 ;;
+        esac
+    }
+    watchdog
+)
+printf '%s\n' 0 2 4 5 20 35 37 39 > "$WORK/expected-auth-checks"
+cmp "$WORK/expected-auth-checks" "$WORK/auth-checks"
+echo 'PASS watchdog authorization probes use 15 seconds after proxyStop and resume 2 seconds when running'
+rm -f "$STATE/owned" "$RUN/stop"
+printf '%s\n' revoked > "$STATE/auth-status"
+printf '%s\n' 'failed ROOT_PERMISSION_REVOKED' > "$STATE/status"
 echo 0 > "$STATE/revoked-since"
 boot_seconds() { echo 600; }
 boot_seconds >/dev/null

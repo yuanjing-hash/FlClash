@@ -47,6 +47,7 @@ internal class RootTunController(
     private var authorizationChannel: RootAuthorizationChannel? = null
     private var lastRuntimeEvent = ""
     private var lastPrivateDnsMode: String? = null
+    private val reconciliationPolling = ReconciliationPolling()
 
     @Volatile private var autostartRequestId: String? = null
 
@@ -166,6 +167,7 @@ internal class RootTunController(
             method in setOf("start", "requestAuth") && desiredRunning && !snapshot.stale &&
                 snapshot.state in setOf(TunState.RUNNING, TunState.STARTING, TunState.AWAITING_AUTH, TunState.RECOVERING)
         if (!coalesced) {
+            if (method != "setAutostart") reconciliationPolling.reset()
             when (method) {
                 "start", "requestAuth" -> {
                     desiredRunning = true
@@ -337,6 +339,7 @@ internal class RootTunController(
         val status =
             if (root.manager == "magisk") {
                 monitoredStatus(root.manager, authChannel().runtimeStatus) { runtime.status() } ?: run {
+                    markRuntimeStale(revision, requestId)
                     startMonitor()
                     return
                 }
@@ -355,12 +358,24 @@ internal class RootTunController(
         }
         synchronized(this) {
             if (!current(revision)) return
+            reconciliationPolling.reset()
             desiredRunning = checked.state in setOf(TunState.RUNNING, TunState.STARTING, TunState.RECOVERING)
             runtimeMayExist = runtimeMayExist || desiredRunning || checked.state == TunState.STOPPING
             publish(checked, checked.lastErrorCode?.let(RootCode::valueOf), requestId)
         }
         if (desiredRunning) startForegroundService()
         if (desiredRunning || checked.state == TunState.STOPPING) startMonitor()
+    }
+
+    @Synchronized
+    private fun markRuntimeStale(
+        revision: Long,
+        requestId: String? = null,
+    ) {
+        if (!current(revision)) return
+        reconciliationPolling.missing(SystemClock.elapsedRealtime())
+        val next = staleRuntime(snapshot)
+        if (next != snapshot) publish(next, RootCode.CLEANUP_FAILED, requestId)
     }
 
     private fun startForegroundService() {
@@ -546,12 +561,17 @@ internal class RootTunController(
                         if (!selected || (!desiredRunning && snapshot.state != TunState.STOPPING && !snapshot.stale)) return@withLock
                         val revision = snapshot.intentRevision
                         if (snapshot.stale && snapshot.rootManager == "magisk") {
-                            reconcile(revision, RootStatus(snapshot.rootManager, snapshot.authStatus))
+                            if (reconciliationPolling.due(SystemClock.elapsedRealtime())) {
+                                reconcile(revision, RootStatus(snapshot.rootManager, snapshot.authStatus))
+                            }
                             return@withLock
                         }
                         val status =
                             monitoredStatus(snapshot.rootManager, authorizationChannel?.runtimeStatus) { runtime.status() }
-                                ?: return@withLock
+                                ?: run {
+                                    markRuntimeStale(revision)
+                                    return@withLock
+                                }
                         if (!current(revision)) return@withLock
                         acceptStatus(status.stdout, revision = revision)
                         if (!status.success && status.stdout.isBlank()) {
@@ -791,12 +811,52 @@ internal class RootTunController(
         }
     }
 
+    internal class ReconciliationPolling {
+        private var staleSince: Long? = null
+        private var nextCheckAt = 0L
+
+        @Synchronized
+        fun missing(nowMs: Long) {
+            if (staleSince == null) staleSince = nowMs
+        }
+
+        @Synchronized
+        fun due(nowMs: Long): Boolean {
+            missing(nowMs)
+            if (nowMs < nextCheckAt) return false
+            val interval = if (nowMs - checkNotNull(staleSince) >= STALE_TIMEOUT_MS) SLOW_INTERVAL_MS else 1_000L
+            nextCheckAt = nowMs + interval
+            return true
+        }
+
+        @Synchronized
+        fun reset() {
+            staleSince = null
+            nextCheckAt = 0L
+        }
+
+        companion object {
+            const val STALE_TIMEOUT_MS = 30_000L
+            const val SLOW_INTERVAL_MS = 30_000L
+        }
+    }
+
     companion object {
+        internal fun staleRuntime(previous: RootSnapshot): RootSnapshot =
+            previous.copy(
+                state = TunState.STOPPING,
+                stale = true,
+                lastErrorCode = RootCode.CLEANUP_FAILED.name,
+                startedAt = null,
+                authDeadlineAt = null,
+            )
+
         internal fun monitoredStatus(
             manager: String,
             pushedStatus: String?,
+            nowMs: Long = SystemClock.elapsedRealtime(),
             query: () -> ShellResult,
-        ): ShellResult? = if (manager == "magisk") pushedStatus?.let { ShellResult(0, it, "") } else query()
+        ): ShellResult? = if (manager == "magisk") RootRuntimeReport.fresh(pushedStatus, nowMs)?.let { ShellResult(0, it, "") } else query()
 
         internal fun authorizationProbeAllowed(
             current: RootSnapshot,

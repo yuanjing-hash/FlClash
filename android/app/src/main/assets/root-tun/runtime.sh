@@ -34,6 +34,10 @@ boot_seconds() {
     cut -d. -f1 /proc/uptime
 }
 
+boot_ms() {
+    awk '{printf "%.0f\n", $1 * 1000}' /proc/uptime
+}
+
 lock() (
     lock_path=$RUN/$1.lock
     if [ -d "$lock_path" ]; then
@@ -731,6 +735,14 @@ stop_probes() {
     done
 }
 
+authorization_interval() {
+    if [ -f "$RUN/stop" ] && [ ! -f "$STATE/owned" ] && [ "$(cat "$STATE/status" 2>/dev/null)" = 'disabled -' ]; then
+        echo 15
+    else
+        echo 2
+    fi
+}
+
 watchdog() {
     lock watchdog || return 0
     trap 'stop_probes; rm -f "$RUN/watchdog.pid" "$RUN/watchdog.heartbeat"; unlock watchdog' EXIT
@@ -742,6 +754,7 @@ watchdog() {
     missing_count=0
     denied_count=0
     next_auth_check=0
+    auth_check_interval=2
     next_package_check=0
     while :; do
         heartbeat watchdog
@@ -766,8 +779,13 @@ watchdog() {
             next_package_check=$(($(boot_seconds) + 10))
             start_probe package
         fi
+        current_auth_interval=$(authorization_interval)
+        if [ "$current_auth_interval" -ne "$auth_check_interval" ]; then
+            auth_check_interval=$current_auth_interval
+            next_auth_check=0
+        fi
         if [ "$(boot_seconds)" -ge "$next_auth_check" ]; then
-            next_auth_check=$(($(boot_seconds) + 2))
+            next_auth_check=$(($(boot_seconds) + auth_check_interval))
             start_probe auth
         fi
         if [ "$(cat "$STATE/auth-status" 2>/dev/null)" = revoked ]; then
@@ -902,6 +920,7 @@ case "${1:-}" in
         ;;
     status)
         cat "$STATE/status" 2>/dev/null || echo disabled
+        printf 'bootMs:%s\n' "$(boot_ms)"
         printf 'auth:%s\n' "$(cat "$STATE/auth-status" 2>/dev/null)"
         printf 'dns:%s\n' "$(cat "$STATE/private-dns" 2>/dev/null)"
         if [ -s "$R/logs/restore-diff.txt" ]; then echo restore-diff:yes; fi

@@ -59,6 +59,10 @@ changed() { [ -f "$R/run/$1.pid" ] && [ "$(pid_of "$1")" != "$2" ] && ready; }
 stopped() { [ ! -f "$R/run/watchdog.pid" ] && [ ! -f "$R/run/supervisor.pid" ] && [ ! -f "$R/run/core.pid" ]; }
 run start
 wait_for ready
+status=$(run status)
+report_ms=$(printf '%s\n' "$status" | sed -n 's/^bootMs://p')
+case "$report_ms" in ''|*[!0-9]*) exit 1 ;; esac
+echo 'PASS runtime status includes bootMs'
 supervisor=$(pid_of supervisor)
 watchdog=$(pid_of watchdog)
 core=$(pid_of core)
