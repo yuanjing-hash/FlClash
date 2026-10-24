@@ -19,6 +19,14 @@ Android 的「网络」设置在 VPN 区附近显示 Root TUN 开关、开机自
 - KernelSU/APatch：原生应返回 `awaitingAuth / notGranted / authDeadlineAt:null`，授权由管理器完成。Flutter 提供管理器入口、重新检测和取消，不自行计时。Magisk 的倒计时仅展示 `authDeadlineAt`，到 0 仍等待原生结果。
 - 原生负责 Root/VPN 互斥、授权/启动/恢复期限、自启落盘和状态收敛；既有核心数据桥不变。
 
+## 弹窗去重
+
+设置页的失败、`CLEANUP_FAILED`、`ROOT_PERMISSION_REVOKED`、`MODE_SWITCH_FAILED` 和 KernelSU/APatch 待授权提示，由 `RootTunController.markPromptShown` 按 **`Snapshot.epoch + code`** 预占并去重。TDD §6.1 将 `epoch` 定义为重装 runtime/重启时更新的会话域；Snapshot 没有独立的 `sessionId`。`seq`、`intentRevision`、状态和错误时间会随同一会话的事件变化，`startedAt` 在授权阶段可能为空、恢复后也可能变化，因此不作为去重键。
+
+沿用 `Preferences`/SharedPreferences 的 `rootTunPromptHistory` 字符串列表，首项是当前 epoch，其余是已提示的协议 code；最多保留当前会话的 27 个已知码，新 epoch 覆盖旧记录。控制层先加载记录再发布快照，弹窗前先在内存预占并等待串行落盘，离开/重进页面和 Flutter 进程重建后仍生效。异步写入期间已换会话或显式重新启动的旧提示会失效。
+
+仅用户显式调用 controller `start()`（包括打开设置页开关）清空已提示码，并在发出原生启动命令前保存；后续命令共用这次写入屏障，保证快速 start/stop 的发送顺序，但不等待前一命令的 Ack。被 stale 状态拦截的启动不清空。`refresh`、检测/重新检测、自动恢复、看门狗重启和事件刷新在同一 epoch 内保留记录。K1 的 `LAST_SESSION_ABNORMAL_EXIT` 横幅和 K7 UI 维持原行为。
+
 ## exportDiagnostics 契约
 
 `exportDiagnostics({requestId: UUID})`，Dart 单独等待上限 20 秒，沿用幂等 ID 和 Result：

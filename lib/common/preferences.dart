@@ -171,6 +171,24 @@ class Preferences {
     await sharedPreferencesIns?.setString(bootRecordKey, json.encode(record));
   }
 
+  Future<List<String>> getRootTunPromptHistory() async {
+    try {
+      final store = await _store.value;
+      return store?.getStringList('rootTunPromptHistory') ?? [];
+    } catch (error) {
+      commonPrint.log(
+        'getRootTunPromptHistory error $error',
+        logLevel: LogLevel.warning,
+      );
+      return [];
+    }
+  }
+
+  Future<void> saveRootTunPromptHistory(List<String> history) async {
+    final store = await _store.value;
+    await store?.setStringList('rootTunPromptHistory', history);
+  }
+
   Future<void> clearPreferences() async {
     final sharedPreferencesIns = await _store.value;
     await sharedPreferencesIns?.clear();
