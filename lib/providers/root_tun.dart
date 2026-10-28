@@ -1,5 +1,8 @@
 import 'dart:async';
 
+import 'package:fl_clash/common/preferences.dart';
+import 'package:fl_clash/common/print.dart';
+import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/root_tun.dart';
 import 'package:fl_clash/plugins/root_tun.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
@@ -10,17 +13,28 @@ part 'generated/root_tun.g.dart';
 RootTunPlugin rootTunPlugin(Ref ref) => RootTunPlugin();
 
 @Riverpod(keepAlive: true)
+Preferences rootTunPreferences(Ref ref) => preferences;
+
+@Riverpod(keepAlive: true)
 class RootTunController extends _$RootTunController {
   StreamSubscription<RootTunEvent>? _subscription;
   Future<void>? _refreshing;
   bool _disposed = false;
   Timer? _reconnect;
   int _subscriptionId = 0;
+  late Future<void> _promptHistoryReady;
+  Future<void> _promptWrite = Future.value();
+  Future<void> _commandReady = Future.value();
+  String? _promptEpoch;
+  final _shownPromptCodes = <String>{};
+  int _promptRevision = 0;
 
   RootTunPlugin get _plugin => ref.read(rootTunPluginProvider);
+  Preferences get _preferences => ref.read(rootTunPreferencesProvider);
 
   @override
   RootTunViewState build() {
+    _promptHistoryReady = _restorePromptHistory();
     ref.onDispose(() {
       _disposed = true;
       _subscriptionId++;
@@ -29,6 +43,42 @@ class RootTunController extends _$RootTunController {
     });
     unawaited(Future<void>.microtask(refresh));
     return const RootTunViewState();
+  }
+
+  Future<void> _restorePromptHistory() async {
+    final history = await _preferences.getRootTunPromptHistory();
+    if (_disposed || history.isEmpty) return;
+    _promptEpoch = history.first;
+    _shownPromptCodes.addAll(
+      history.skip(1).where(RootTunCode.values.contains),
+    );
+  }
+
+  Future<void> _savePromptHistory() {
+    final history = [_promptEpoch!, ..._shownPromptCodes];
+    final store = _preferences;
+    return _promptWrite = _promptWrite
+        .then((_) => store.saveRootTunPromptHistory(history))
+        .catchError((Object error) {
+          commonPrint.log(
+            'Save Root TUN prompt history failed: $error',
+            logLevel: LogLevel.warning,
+          );
+        });
+  }
+
+  Future<bool> markPromptShown(RootTunSnapshot snapshot, String code) async {
+    if (_disposed ||
+        state.snapshot?.epoch != snapshot.epoch ||
+        !RootTunCode.values.contains(code) ||
+        !_shownPromptCodes.add(code)) {
+      return false;
+    }
+    final revision = _promptRevision;
+    await _savePromptHistory();
+    return !_disposed &&
+        revision == _promptRevision &&
+        state.snapshot?.epoch == snapshot.epoch;
   }
 
   void _failure(Object error) {
@@ -51,6 +101,14 @@ class RootTunController extends _$RootTunController {
         return;
       }
     }
+    // TDD §6.1 makes epoch the runtime session domain; sequence, error time and
+    // startedAt can change during recovery or be absent while awaiting auth.
+    if (_promptEpoch != snapshot.epoch) {
+      _promptEpoch = snapshot.epoch;
+      _shownPromptCodes.clear();
+      _promptRevision++;
+      unawaited(_savePromptHistory());
+    }
     state = state.copyWith(
       snapshot: snapshot,
       channelAvailable: true,
@@ -69,6 +127,7 @@ class RootTunController extends _$RootTunController {
     final id = ++_subscriptionId;
     await _subscription?.cancel();
     _subscription = null;
+    await _promptHistoryReady;
     if (_disposed) return;
     try {
       final result = await _plugin.getState();
@@ -150,6 +209,7 @@ class RootTunController extends _$RootTunController {
   Future<void> _command(
     Future<RootTunResult<RootTunAck>> Function() invoke, {
     bool allowWhenStale = false,
+    bool resetPrompts = false,
   }) async {
     if (_disposed || (!allowWhenStale && state.snapshot?.stale != false)) {
       return;
@@ -159,6 +219,13 @@ class RootTunController extends _$RootTunController {
       commandError: null,
     );
     try {
+      if (resetPrompts) {
+        _promptRevision++;
+        _shownPromptCodes.clear();
+        _commandReady = _savePromptHistory();
+      }
+      await _commandReady;
+      if (_disposed) return;
       final result = await invoke();
       if (_disposed) return;
       if (result.data case final ack?) _accept(ack.snapshot, fromAck: true);
@@ -184,7 +251,7 @@ class RootTunController extends _$RootTunController {
     }
   }
 
-  Future<void> start() => _command(_plugin.start);
+  Future<void> start() => _command(_plugin.start, resetPrompts: true);
   Future<void> stop(RootTunStopReason reason) =>
       _command(() => _plugin.stop(reason), allowWhenStale: true);
   Future<void> recheckRoot() async {

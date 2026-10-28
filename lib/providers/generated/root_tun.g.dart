@@ -50,6 +50,48 @@ final class RootTunPluginProvider
 
 String _$rootTunPluginHash() => r'8994a3fd2d562669028e77523e28aa379e18255b';
 
+@ProviderFor(rootTunPreferences)
+final rootTunPreferencesProvider = RootTunPreferencesProvider._();
+
+final class RootTunPreferencesProvider
+    extends $FunctionalProvider<Preferences, Preferences, Preferences>
+    with $Provider<Preferences> {
+  RootTunPreferencesProvider._()
+    : super(
+        from: null,
+        argument: null,
+        retry: null,
+        name: r'rootTunPreferencesProvider',
+        isAutoDispose: false,
+        dependencies: null,
+        $allTransitiveDependencies: null,
+      );
+
+  @override
+  String debugGetCreateSourceHash() => _$rootTunPreferencesHash();
+
+  @$internal
+  @override
+  $ProviderElement<Preferences> $createElement($ProviderPointer pointer) =>
+      $ProviderElement(pointer);
+
+  @override
+  Preferences create(Ref ref) {
+    return rootTunPreferences(ref);
+  }
+
+  /// {@macro riverpod.override_with_value}
+  Override overrideWithValue(Preferences value) {
+    return $ProviderOverride(
+      origin: this,
+      providerOverride: $SyncValueProvider<Preferences>(value),
+    );
+  }
+}
+
+String _$rootTunPreferencesHash() =>
+    r'c4c43b963d85684b866391b7f46c864f56efbbaa';
+
 @ProviderFor(RootTunController)
 final rootTunControllerProvider = RootTunControllerProvider._();
 
@@ -82,7 +124,7 @@ final class RootTunControllerProvider
   }
 }
 
-String _$rootTunControllerHash() => r'3f480f0535c4ff85f27d6428749f5fab937759dd';
+String _$rootTunControllerHash() => r'050be43a55f900b64d73beae456ddc05d2a35a0a';
 
 abstract class _$RootTunController extends $Notifier<RootTunViewState> {
   RootTunViewState build();

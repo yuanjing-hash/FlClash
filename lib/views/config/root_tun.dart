@@ -25,7 +25,6 @@ class _RootTunSectionState extends ConsumerState<RootTunSection>
   bool _expanded = false;
   bool _exporting = false;
   String? _exportError;
-  final _shownPrompts = <String>{};
 
   RootTunController get _controller =>
       ref.read(rootTunControllerProvider.notifier);
@@ -68,7 +67,7 @@ class _RootTunSectionState extends ConsumerState<RootTunSection>
     }
   }
 
-  void _feedback(RootTunViewState value) {
+  Future<void> _feedback(RootTunViewState value) async {
     final snapshot = value.snapshot;
     if (snapshot == null) return;
     final code =
@@ -90,9 +89,7 @@ class _RootTunSectionState extends ConsumerState<RootTunSection>
         code == RootTunCode.rootPermissionRevoked ||
         code == RootTunCode.modeSwitchFailed;
     if (!show || code == null) return;
-    final key =
-        '${snapshot.epoch}:${snapshot.lastErrorAt}:${snapshot.state}:$code';
-    if (!_shownPrompts.add(key)) return;
+    if (!await _controller.markPromptShown(snapshot, code) || !mounted) return;
     final l = context.appLocalizations;
     final text = rootTunErrorLabel(
       code,
@@ -158,7 +155,10 @@ class _RootTunSectionState extends ConsumerState<RootTunSection>
   Widget build(BuildContext context) {
     final l = context.appLocalizations;
     final value = ref.watch(rootTunControllerProvider);
-    ref.listen(rootTunControllerProvider, (_, next) => _feedback(next));
+    ref.listen(
+      rootTunControllerProvider,
+      (_, next) => unawaited(_feedback(next)),
+    );
     final snapshot = value.snapshot;
     final busy = value.pendingCommands > 0;
     final unavailable = value.channelAvailable != true;

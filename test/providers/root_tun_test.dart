@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:fl_clash/common/constant.dart';
+import 'package:fl_clash/common/preferences.dart';
 import 'package:fl_clash/models/root_tun.dart';
 import 'package:fl_clash/plugins/root_tun.dart';
 import 'package:fl_clash/providers/root_tun.dart';
@@ -8,6 +9,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../helpers/preferences.dart';
 import '../support/root_tun.dart';
 
 void main() {
@@ -27,7 +29,8 @@ void main() {
         (_) {},
       );
 
-  setUp(() {
+  setUp(() async {
+    await mockPreferences();
     container = ProviderContainer();
     messenger.setMockMethodCallHandler(events, (_) async => null);
   });
@@ -254,4 +257,225 @@ void main() {
       pending.complete(null);
     },
   );
+
+  group('prompt history', () {
+    late Map<String, dynamic> snapshot;
+    late List<String> commands;
+    Completer<void>? startGate;
+
+    setUp(() {
+      snapshot = rootTunSnapshotJson(
+        state: 'failed',
+        error: RootTunCode.coreStartFailed,
+      );
+      commands = [];
+      startGate = null;
+      messenger.setMockMethodCallHandler(methods, (call) async {
+        if (call.method == 'getState' || call.method == 'detectRoot') {
+          return rootTunSuccess(snapshot);
+        }
+        commands.add(call.method);
+        if (call.method == 'start') {
+          expect(await preferences.getRootTunPromptHistory(), [
+            snapshot['epoch'],
+          ]);
+        }
+        if (call.method == 'start') await startGate?.future;
+        return rootTunSuccess({
+          'requestId': rootTunMap(call.arguments)['requestId'],
+          'intentRevision': snapshot['intentRevision'],
+          'disposition': 'accepted',
+          'snapshot': snapshot,
+        });
+      });
+    });
+
+    Future<RootTunController> controller() async {
+      final controller = container.read(rootTunControllerProvider.notifier);
+      await controller.refresh();
+      return controller;
+    }
+
+    RootTunSnapshot current() =>
+        container.read(rootTunControllerProvider).snapshot!;
+
+    test(
+      'same epoch and code is claimed once, including concurrent calls',
+      () async {
+        final notifier = await controller();
+        expect(
+          await Future.wait([
+            notifier.markPromptShown(current(), RootTunCode.coreStartFailed),
+            notifier.markPromptShown(current(), RootTunCode.coreStartFailed),
+          ]),
+          [true, false],
+        );
+        snapshot = {
+          ...snapshot,
+          'seq': 50,
+          'intentRevision': 12,
+          'state': 'recovering',
+          'lastErrorAt': 1792713605000,
+          'startedAt': null,
+        };
+        await notifier.refresh();
+        expect(
+          await notifier.markPromptShown(
+            current(),
+            RootTunCode.coreStartFailed,
+          ),
+          false,
+        );
+        expect(
+          await notifier.markPromptShown(current(), RootTunCode.cleanupFailed),
+          true,
+        );
+      },
+    );
+
+    test('new epoch allows the same code and replaces old history', () async {
+      final notifier = await controller();
+      final old = current();
+      expect(
+        await notifier.markPromptShown(old, RootTunCode.coreStartFailed),
+        true,
+      );
+      snapshot = rootTunSnapshotJson(epoch: 'boot2', seq: 1, revision: 0);
+      await notifier.refresh();
+      expect(
+        await notifier.markPromptShown(old, RootTunCode.cleanupFailed),
+        false,
+      );
+      expect(
+        await notifier.markPromptShown(current(), RootTunCode.coreStartFailed),
+        true,
+      );
+      expect(await preferences.getRootTunPromptHistory(), [
+        'boot2',
+        RootTunCode.coreStartFailed,
+      ]);
+    });
+
+    test(
+      'explicit start clears memory and persisted history before native start',
+      () async {
+        final notifier = await controller();
+        await notifier.markPromptShown(current(), RootTunCode.coreStartFailed);
+        await notifier.start();
+        expect(commands, ['start']);
+        expect(await preferences.getRootTunPromptHistory(), ['boot1']);
+        expect(
+          await notifier.markPromptShown(
+            current(),
+            RootTunCode.coreStartFailed,
+          ),
+          true,
+        );
+        await notifier.start();
+
+        container.dispose();
+        container = ProviderContainer();
+        final recreated = await controller();
+        expect(
+          await recreated.markPromptShown(
+            current(),
+            RootTunCode.coreStartFailed,
+          ),
+          true,
+        );
+      },
+    );
+
+    test(
+      'stop follows a pending start reset without waiting for its Ack',
+      () async {
+        final notifier = await controller();
+        await notifier.markPromptShown(current(), RootTunCode.coreStartFailed);
+        startGate = Completer<void>();
+        final starting = notifier.start();
+        await notifier.stop(RootTunStopReason.proxyStop);
+        startGate!.complete();
+        await starting;
+        expect(commands, ['start', 'stop']);
+      },
+    );
+
+    test('refresh, recovery, recheck and stop preserve shown codes', () async {
+      final notifier = await controller();
+      await notifier.markPromptShown(current(), RootTunCode.coreStartFailed);
+      for (final state in ['recovering', 'running']) {
+        final applied = Completer<void>();
+        final listener = container.listen(rootTunControllerProvider, (_, next) {
+          if (!applied.isCompleted && next.snapshot?.state.name == state) {
+            applied.complete();
+          }
+        });
+        final baseSeq = current().seq;
+        snapshot = {...snapshot, 'seq': baseSeq + 1, 'state': state};
+        await send(
+          rootTunEventJson(
+            seq: baseSeq + 1,
+            baseSeq: baseSeq,
+            changes: {'state': state, 'startedAt': 1792713608000},
+          ),
+        );
+        await applied.future;
+        listener.close();
+        expect(current().state.name, state);
+        expect(
+          await notifier.markPromptShown(
+            current(),
+            RootTunCode.coreStartFailed,
+          ),
+          false,
+        );
+      }
+      await notifier.detectRoot();
+      await notifier.recheckRoot();
+      await notifier.stop(RootTunStopReason.acknowledgeFailure);
+      expect(
+        await notifier.markPromptShown(current(), RootTunCode.coreStartFailed),
+        false,
+      );
+    });
+
+    test('blocked stale start does not clear history', () async {
+      final notifier = await controller();
+      await notifier.markPromptShown(current(), RootTunCode.coreStartFailed);
+      snapshot = {...snapshot, 'stale': true};
+      await notifier.refresh();
+      await notifier.start();
+      expect(commands, isEmpty);
+      expect(
+        await notifier.markPromptShown(current(), RootTunCode.coreStartFailed),
+        false,
+      );
+    });
+
+    test(
+      'persisted prompts survive a new container and preferences rebind',
+      () async {
+        final notifier = await controller();
+        await notifier.markPromptShown(current(), RootTunCode.coreStartFailed);
+        await notifier.markPromptShown(current(), RootTunCode.cleanupFailed);
+        container.dispose();
+        await preferences.rebind();
+        container = ProviderContainer();
+        final recreated = await controller();
+        for (final code in [
+          RootTunCode.coreStartFailed,
+          RootTunCode.cleanupFailed,
+        ]) {
+          expect(await recreated.markPromptShown(current(), code), false);
+        }
+        expect(
+          await recreated.markPromptShown(
+            current(),
+            RootTunCode.modeSwitchFailed,
+          ),
+          true,
+        );
+      },
+    );
+  });
 }
