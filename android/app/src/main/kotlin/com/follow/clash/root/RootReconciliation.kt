@@ -6,6 +6,22 @@ internal object RootReconciliation {
     fun initial(persisted: RootSnapshot?): RootSnapshot =
         persisted?.copy(epoch = UUID.randomUUID().toString(), seq = 0, stale = true) ?: RootSnapshot()
 
+    fun missing(
+        cached: RootSnapshot,
+        graceExpired: Boolean = false,
+    ): RootSnapshot =
+        if (graceExpired && cached.state in setOf(TunState.STARTING, TunState.RUNNING, TunState.RECOVERING, TunState.STOPPING)) {
+            cached.copy(
+                state = TunState.STOPPING,
+                stale = true,
+                lastErrorCode = RootCode.CLEANUP_FAILED.name,
+                startedAt = null,
+                authDeadlineAt = null,
+            )
+        } else {
+            cached.copy(stale = true)
+        }
+
     fun checked(
         cached: RootSnapshot,
         root: RootStatus,
@@ -20,11 +36,29 @@ internal object RootReconciliation {
                 ?.firstOrNull()
                 ?.substringBefore(' ')
                 ?.let { runCatching { TunState.fromWire(it) }.getOrNull() }
-        val auth = if (status != null && !status.success && runtimeState == null) "notGranted" else root.auth
+        if (runtimeState == null && root.auth == "granted" && !prerequisite) return missing(cached)
+        if (status != null && !status.success && runtimeState == null) return cached.copy(stale = true)
+        val runtimeCode =
+            status
+                ?.stdout
+                ?.lineSequence()
+                ?.firstOrNull()
+                ?.substringAfter(' ', "")
+                ?.let { runCatching { RootCode.valueOf(it) }.getOrNull() }
+        val reportedRevocation = status != null && "auth:revoked" in status.stdout && runtimeState == TunState.FAILED
+        val auth =
+            if (reportedRevocation) {
+                "revoked"
+            } else if (runtimeState in setOf(TunState.STARTING, TunState.RUNNING, TunState.RECOVERING) && status?.success == true) {
+                "granted"
+            } else {
+                root.auth
+            }
         val active = setOf(TunState.STARTING, TunState.RUNNING, TunState.RECOVERING)
         val startIntent = cached.rootTunEnabled || runtimeState in active
         val state =
             when {
+                runtimeState in setOf(TunState.FAILED, TunState.STOPPING, TunState.DISABLED) -> checkNotNull(runtimeState)
                 prerequisite -> TunState.DEGRADED
                 auth != "granted" && !startIntent -> TunState.DISABLED
                 auth != "granted" -> TunState.AWAITING_AUTH
@@ -33,6 +67,12 @@ internal object RootReconciliation {
             }
         val code =
             when {
+                runtimeState == TunState.FAILED -> runtimeCode?.name
+                runtimeState == TunState.STOPPING ->
+                    runtimeCode
+                        ?.takeUnless {
+                            it in setOf(RootCode.ROOT_PERMISSION_REVOKED, RootCode.AUTOSTART_ROOT_REVOKED)
+                        }?.name
                 prerequisite -> root.error?.name
                 state == TunState.DISABLED && auth != "granted" -> null
                 auth != "granted" ->
