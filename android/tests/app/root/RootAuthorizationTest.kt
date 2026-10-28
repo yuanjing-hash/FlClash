@@ -8,6 +8,7 @@ import java.net.Socket
 import java.nio.file.Files
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicLong
 
 class RootAuthorizationTest {
     @Test
@@ -30,23 +31,58 @@ class RootAuthorizationTest {
     fun signedRootStatusArrivesWithoutAnAppSuProbe() {
         val directory = Files.createTempDirectory("root-status").toFile()
         try {
-            RootAuthorizationChannel(directory).use { channel ->
+            RootAuthorizationChannel(directory) { 1_000L }.use { channel ->
                 val parts = channel.configuration.trim().split(' ')
                 val port = parts[0].toInt()
                 val nonce = UUID.randomUUID().toString()
-                val status = "running -|auth:|dns:off|autostart:no"
+                val status = "running -|auth:|dns:off|autostart:no|bootMs:1000"
                 exchange(port, "probe $nonce bad-signature $status")
                 assertNull(channel.runtimeStatus)
                 val signature = digest(parts[1], nonce, status)
                 exchange(port, "probe $nonce $signature $status")
                 assertEquals(status.replace('|', '\n'), channel.runtimeStatus)
-                val revoked = "failed ROOT_PERMISSION_REVOKED|auth:revoked|autostart:no"
+                val revoked = "failed ROOT_PERMISSION_REVOKED|auth:revoked|autostart:no|bootMs:1000"
                 exchange(port, "probe $nonce ${digest(parts[1], nonce, revoked)} $revoked")
                 assertEquals(revoked.replace('|', '\n'), channel.runtimeStatus)
                 channel.beginSession()
                 assertNull(channel.runtimeStatus)
                 exchange(port, "probe $nonce $signature $status")
                 assertNull(channel.runtimeStatus)
+            }
+        } finally {
+            directory.deleteRecursively()
+        }
+    }
+
+    @Test
+    fun signedReportsExpireByBootTimeAndLegacyOrInvalidTimestampsStayStale() {
+        val directory = Files.createTempDirectory("root-status-expiry").toFile()
+        val now = AtomicLong(10_000)
+        try {
+            RootAuthorizationChannel(directory, now::get).use { channel ->
+                val parts = channel.configuration.trim().split(' ')
+                val nonce = UUID.randomUUID().toString()
+
+                fun report(status: String) {
+                    exchange(parts[0].toInt(), "probe $nonce ${digest(parts[1], nonce, status)} $status")
+                }
+                val status = "running -|bootMs:10000"
+                report(status)
+                assertEquals("running -\nbootMs:10000", channel.runtimeStatus)
+                now.set(10_000 + RootRuntimeReport.MAX_AGE_MS)
+                assertEquals("running -\nbootMs:10000", channel.runtimeStatus)
+                now.incrementAndGet()
+                assertNull(channel.runtimeStatus)
+                report(status)
+                assertNull(channel.runtimeStatus)
+                now.set(10_000)
+                for (invalid in listOf("", "|bootMs:bad", "|bootMs:-1", "|bootMs:999999", "|bootMs:10000|bootMs:10000")) {
+                    report("running -$invalid")
+                    assertNull(channel.runtimeStatus)
+                }
+                val refreshed = "running -|bootMs:${now.get()}"
+                report(refreshed)
+                assertEquals(refreshed.replace('|', '\n'), channel.runtimeStatus)
             }
         } finally {
             directory.deleteRecursively()

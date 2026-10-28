@@ -26,9 +26,12 @@ class RootShellTest {
     fun boundsOutputAndTimesOutWithoutWaitingForInheritedPipes() {
         val shell = RootShell()
         val start = System.nanoTime()
-        assertTrue(shell.execute(listOf("sh", "-c", "sleep 5"), 50).timedOut)
+        val interrupted = shell.execute(listOf("sh", "-c", "printf critical-evidence; sleep 5"), 50)
+        assertTrue(interrupted.timedOut)
+        assertEquals("critical-evidence", interrupted.stdout)
         assertTrue((System.nanoTime() - start) / 1_000_000 < 2_000)
         assertTrue(shell.execute(listOf("sh", "-c", "yes x | head -c 2000000")).stdout.length <= 1048576)
+        assertEquals(2_000_000, RootShell(4 * 1024 * 1024).execute(listOf("sh", "-c", "yes x | head -c 2000000")).stdout.length)
     }
 
     @Test

@@ -14,7 +14,7 @@ internal object RootDiagnostics {
         logs: Map<String, Any?>,
         runtime: RootRuntime,
     ): File {
-        val evidence = runtime.diagnostics(snapshot.authStatus == "granted")
+        val evidence = runtime.diagnostics(snapshot.authStatus == "granted", snapshot.rootManager)
         return archive(
             context.cacheDir,
             "${Build.MANUFACTURER} ${Build.MODEL}\n" +
@@ -50,7 +50,11 @@ internal object RootDiagnostics {
                 zip.write(redact(text).toByteArray())
                 zip.closeEntry()
             }
-            entry("device.txt", device)
+            entry("device.txt", device + "\nApp su observations:\n" + RootShell.diagnosticLog())
+            entry(
+                "manifest.txt",
+                evidence.manifest + "\napp-su-log collected=true\nstate.json collected=true\napp-root-tun-log.json collected=true\n",
+            )
             entry("state.json", gson.toJson(snapshot.toMap()))
             entry("app-root-tun-log.json", gson.toJson(logs))
             entry("network-and-core.txt", evidence.network)
@@ -66,7 +70,7 @@ internal object RootDiagnostics {
         value
             .replace(Regex("(?im)(\\b(?:authorization|password|secret|token|private[-_]?key|api[-_]?key)\\s*[:=]).*$"), "$1 [redacted]")
             .replace(Regex("(?i)(bearer\\s+)[^\\s,}]+"), "$1[redacted]")
-            .replace(Regex("([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\\s@]+@"), "$1[redacted]@")
+            .replace(Regex("\\b([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\\s@]+@"), "$1[redacted]@")
             .replace(Regex("(https?://[^\\s?'\\\"]+)\\?[^\\s'\\\"]+"), "$1?[redacted]")
             .replace(Regex("(?i)(?:ss|ssr|vmess|vless|trojan)://[^\\s]+"), "[redacted proxy URL]")
 }
@@ -75,8 +79,24 @@ internal data class RootDiagnosticEvidence(
     val device: String,
     val network: String,
     val restoreDiff: String?,
+    val manifest: String = "collector manifest unavailable",
 ) {
     companion object {
+        private val items =
+            "clock boot-state tools boot-evidence auth-data package device grep processes directories runtime-state notifications " +
+                "ipv4 ipv6 iptables ip6tables nft selinux connectivity restore-diff baseline logs"
+
+        private fun incompleteManifest(result: ShellResult): String {
+            val completed =
+                result.stdout
+                    .lineSequence()
+                    .filter { it.startsWith("[collected] ") }
+                    .map { it.removePrefix("[collected] ") }
+                    .associateBy { it.substringBefore(' ') }
+            return "collector incomplete; exit=${result.exitCode} timeout=${result.timedOut}\n" +
+                items.split(' ').joinToString("\n") { completed[it] ?: "$it not confirmed" }
+        }
+
         fun parse(result: ShellResult): RootDiagnosticEvidence {
             fun section(name: String): String? {
                 val start = "[FLCLASH:$name:BEGIN]\n"
@@ -89,6 +109,7 @@ internal data class RootDiagnosticEvidence(
                 section("device").orEmpty() + outcome,
                 (section("network") ?: result.stdout) + outcome,
                 section("restore-diff"),
+                section("manifest") ?: incompleteManifest(result),
             )
         }
     }

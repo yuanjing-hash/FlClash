@@ -15,7 +15,9 @@ internal data class ShellResult(
     val success: Boolean get() = exitCode == 0 && !timedOut
 }
 
-internal class RootShell {
+internal class RootShell(
+    private val outputLimit: Int = 1024 * 1024,
+) {
     private val active = AtomicReference<Process?>()
 
     fun cancel() {
@@ -36,26 +38,31 @@ internal class RootShell {
         val process =
             try {
                 ProcessBuilder(arguments).start()
-            } catch (_: Exception) {
-                return ShellResult(127, "", "Executable unavailable")
+            } catch (error: Exception) {
+                return ShellResult(127, "", "Executable unavailable: ${error.javaClass.simpleName}: ${error.message}")
+                    .also { record(arguments, it) }
             }
         check(active.compareAndSet(null, process)) { "Concurrent shell invocation" }
         val readers =
             Executors.newFixedThreadPool(3) { runnable ->
                 Thread(runnable, "root-tun-shell").apply { isDaemon = true }
             }
-        val stdout = readers.submit<String> { capture(process.inputStream) }
-        val stderr = readers.submit<String> { capture(process.errorStream) }
+        val stdoutBuffer = ByteArrayOutputStream()
+        val stderrBuffer = ByteArrayOutputStream()
+        val stdout = readers.submit { capture(process.inputStream, stdoutBuffer) }
+        val stderr = readers.submit { capture(process.errorStream, stderrBuffer) }
         val writer = readers.submit { runCatching { process.outputStream.use { it.write(input) } } }
         return try {
             val finished = process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)
             if (!finished) process.destroyForcibly()
+            runCatching { stdout.get(300, TimeUnit.MILLISECONDS) }
+            runCatching { stderr.get(300, TimeUnit.MILLISECONDS) }
             ShellResult(
                 exitCode = if (finished) process.exitValue() else -1,
-                stdout = runCatching { stdout.get(300, TimeUnit.MILLISECONDS) }.getOrDefault(""),
-                stderr = runCatching { stderr.get(300, TimeUnit.MILLISECONDS) }.getOrDefault(""),
+                stdout = synchronized(stdoutBuffer) { stdoutBuffer.toString("UTF-8") },
+                stderr = synchronized(stderrBuffer) { stderrBuffer.toString("UTF-8") },
                 timedOut = !finished,
-            )
+            ).also { record(arguments, it) }
         } finally {
             active.compareAndSet(process, null)
             writer.cancel(true)
@@ -66,21 +73,52 @@ internal class RootShell {
         }
     }
 
-    private fun capture(stream: InputStream): String =
+    private fun capture(
+        stream: InputStream,
+        output: ByteArrayOutputStream,
+    ) {
         stream.use {
-            val output = ByteArrayOutputStream()
             val buffer = ByteArray(8192)
             while (true) {
                 val count = it.read(buffer)
                 if (count < 0) break
-                val available = MAX_OUTPUT - output.size()
-                if (available > 0) output.write(buffer, 0, minOf(available, count))
+                synchronized(output) {
+                    val available = outputLimit - output.size()
+                    if (available > 0) output.write(buffer, 0, minOf(available, count))
+                }
             }
-            output.toString("UTF-8")
         }
+    }
 
     companion object {
-        private const val MAX_OUTPUT = 1024 * 1024
+        private val observations = ArrayDeque<String>()
+
+        @Synchronized
+        private fun record(
+            arguments: List<String>,
+            result: ShellResult,
+        ) {
+            if (arguments.firstOrNull() != "su") return
+            val operation =
+                if (arguments ==
+                    listOf("su", "-v")
+                ) {
+                    "su -v"
+                } else if (arguments.lastOrNull() == "id -u") {
+                    "su -c id -u"
+                } else {
+                    "su command"
+                }
+            observations.addLast(
+                "${System.currentTimeMillis()} $operation exit=${result.exitCode} timeout=${result.timedOut} stderr=${result.stderr.take(
+                    2048,
+                )}",
+            )
+            if (observations.size > 64) observations.removeFirst()
+        }
+
+        @Synchronized
+        fun diagnosticLog(): String = observations.joinToString("\n")
 
         fun quote(value: String): String {
             require('\u0000' !in value)

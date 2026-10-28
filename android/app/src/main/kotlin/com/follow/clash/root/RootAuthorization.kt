@@ -1,5 +1,6 @@
 package com.follow.clash.root
 
+import android.os.SystemClock
 import java.io.File
 import java.net.InetAddress
 import java.net.InetSocketAddress
@@ -7,6 +8,23 @@ import java.net.ServerSocket
 import java.net.SocketTimeoutException
 import java.security.MessageDigest
 import java.util.UUID
+
+internal object RootRuntimeReport {
+    const val MAX_AGE_MS = 8_000L
+
+    fun fresh(
+        raw: String?,
+        nowMs: Long,
+    ): String? {
+        val bootMs =
+            raw
+                ?.lineSequence()
+                ?.singleOrNull { it.startsWith("bootMs:") }
+                ?.removePrefix("bootMs:")
+                ?.toLongOrNull()
+        return raw?.takeIf { bootMs != null && bootMs >= 0 && nowMs >= bootMs && nowMs - bootMs <= MAX_AGE_MS }
+    }
+}
 
 internal class RootAuthorization {
     private var denials = 0
@@ -51,6 +69,7 @@ internal class RootAuthorization {
 
 internal class RootAuthorizationChannel(
     directory: File,
+    private val elapsedRealtime: () -> Long = SystemClock::elapsedRealtime,
 ) : AutoCloseable {
     private val credentials = File(directory, "root-tun-auth-channel")
     private val previous = runCatching { credentials.readLines() }.getOrDefault(emptyList())
@@ -71,8 +90,9 @@ internal class RootAuthorizationChannel(
     @Volatile var cleanupCode: RootCode? = null
         private set
 
-    @Volatile var runtimeStatus: String? = null
-        private set
+    @Volatile private var reportedRuntimeStatus: String? = null
+
+    val runtimeStatus: String? get() = RootRuntimeReport.fresh(reportedRuntimeStatus, elapsedRealtime())
 
     val configuration: String get() = "${server.localPort} $token\n"
 
@@ -108,7 +128,7 @@ internal class RootAuthorizationChannel(
 
     fun reset() {
         cleanupCode = null
-        runtimeStatus = null
+        reportedRuntimeStatus = null
         verdict = "granted"
     }
 
@@ -139,7 +159,7 @@ internal class RootAuthorizationChannel(
                             if (parts.size == 4) {
                                 synchronized(this) {
                                     if (MessageDigest.isEqual(parts[2].toByteArray(), digest(parts[1], parts[3]).toByteArray())) {
-                                        runtimeStatus = parts[3].replace('|', '\n')
+                                        reportedRuntimeStatus = parts[3].replace('|', '\n')
                                     }
                                 }
                             }
