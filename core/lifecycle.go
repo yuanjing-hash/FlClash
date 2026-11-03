@@ -31,7 +31,9 @@ func handleInitClash(params *InitParams) bool {
 	sdkVersion.Store(int32(params.Version))
 	constant.SetHomeDir(params.HomeDir)
 	initOwnership(params.HomeDir)
-	clearSpilledResponses()
+	if rootOptions == nil && !params.PreserveResponses {
+		clearSpilledResponses()
+	}
 	isInit.Store(true)
 	return true
 }
@@ -55,6 +57,9 @@ func handleStopListener() bool {
 	defer configMu.Unlock()
 	isRunning.Store(false)
 	listener.StopListener()
+	if stopRootTun != nil {
+		stopRootTun()
+	}
 	resolver.ResetConnection()
 	return true
 }
@@ -80,7 +85,11 @@ func updateListeners(cfg *config.Config) {
 	listener.ReCreateShadowSocks(general.ShadowSocksConfig, tunnel.Tunnel)
 	listener.ReCreateVmess(general.VmessConfig, tunnel.Tunnel)
 	listener.ReCreateTuic(general.TuicServer, tunnel.Tunnel)
-	if !features.Android {
+	if updateRootTun != nil {
+		if err := updateRootTun(general.Tun); err != nil {
+			logError("phase=root/create-tun: %v", err)
+		}
+	} else if !features.Android {
 		listener.ReCreateTun(general.Tun, tunnel.Tunnel)
 	}
 }
@@ -92,6 +101,9 @@ func handleShutdown() bool {
 	configMu.Lock()
 	isRunning.Store(false)
 	listener.StopListener()
+	if stopRootTun != nil {
+		stopRootTun()
+	}
 	updater.StopGeoUpdater()
 	executor.Shutdown()
 	currentConfig = nil

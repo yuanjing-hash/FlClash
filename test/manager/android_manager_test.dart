@@ -19,12 +19,16 @@ import '../helpers/test_profiles.dart';
 
 class _RecordingSetupAction extends SetupAction {
   static final requests = <bool>[];
+  static final runTimes = <DateTime?>[];
 
   @override
   Future<bool> setRunning(bool running, {bool initialize = false}) async {
     requests.add(running);
     return true;
   }
+
+  @override
+  void syncRunTime(DateTime? startedAt) => runTimes.add(startedAt);
 }
 
 void main() {
@@ -37,6 +41,7 @@ void main() {
     await mockPreferences();
     store = await SharedPreferences.getInstance();
     _RecordingSetupAction.requests.clear();
+    _RecordingSetupAction.runTimes.clear();
     container = ProviderContainer(
       overrides: [
         profilesProvider.overrideWith(TestProfiles.new),
@@ -86,6 +91,24 @@ void main() {
     await tester.pump();
 
     expect(_RecordingSetupAction.requests, [false]);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('mirrors native root runtime without sending another command', (
+    tester,
+  ) async {
+    await pumpAndroidManager(tester);
+    final listener =
+        tester.state(find.byType(AndroidManager)) as ServiceListener;
+    final startedAt = DateTime.fromMillisecondsSinceEpoch(1234);
+
+    listener.onServiceRunTimeChanged(startedAt);
+    listener.onServiceRunTimeChanged(null);
+    await tester.pump();
+
+    expect(_RecordingSetupAction.runTimes, [startedAt, null]);
+    expect(_RecordingSetupAction.requests, isEmpty);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });

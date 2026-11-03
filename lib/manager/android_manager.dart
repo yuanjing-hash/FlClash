@@ -7,6 +7,7 @@ import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/plugins/service.dart';
 import 'package:fl_clash/providers/providers.dart';
+import 'package:fl_clash/providers/root_tun.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -20,10 +21,11 @@ class AndroidManager extends ConsumerStatefulWidget {
 }
 
 class _AndroidContainerState extends ConsumerState<AndroidManager>
-    with ServiceListener {
+    with ServiceListener, WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     ref.listenManual(appSettingProvider.select((state) => state.hidden), (
       prev,
       next,
@@ -41,7 +43,7 @@ class _AndroidContainerState extends ConsumerState<AndroidManager>
           await preferences.saveShareState(next);
         }, duration: const Duration(seconds: 1));
         if (prev?.needSyncSharedState != next.needSyncSharedState) {
-          service?.syncState(next.needSyncSharedState);
+          service?.syncState(next);
         }
       }
     });
@@ -64,12 +66,20 @@ class _AndroidContainerState extends ConsumerState<AndroidManager>
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     debouncer.cancel(FunctionTag.reloadPackages);
     if (app?.onPackagesChanged == _reloadPackages) {
       app?.onPackagesChanged = null;
     }
     service?.removeListener(this);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      unawaited(ref.read(rootTunControllerProvider.notifier).refresh());
+    }
   }
 
   @override
@@ -82,6 +92,11 @@ class _AndroidContainerState extends ConsumerState<AndroidManager>
   void onServiceStopped() {
     unawaited(ref.read(setupActionProvider.notifier).setRunning(false));
     super.onServiceStopped();
+  }
+
+  @override
+  void onServiceRunTimeChanged(DateTime? startedAt) {
+    ref.read(setupActionProvider.notifier).syncRunTime(startedAt);
   }
 
   @override

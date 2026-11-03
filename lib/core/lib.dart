@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:fl_clash/common/common.dart';
+import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/plugins/service.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/state.dart';
@@ -21,6 +22,7 @@ class CoreLib extends CoreHandlerInterface {
   int _lifecycleRevision = 0;
   int _methodCallId = 0;
   bool _closed = false;
+  Future<String>? _pendingConfig;
 
   CoreLib._internal() : _service = service;
 
@@ -112,20 +114,26 @@ class CoreLib extends CoreHandlerInterface {
     return _stop(allowClosed: true);
   }
 
-  // The service opens and closes the Core's listeners itself and reports a run
-  // that ends, so once it takes the command the Core's own answer is moot.
+  @override
+  Future<String> setupConfig(SetupParams setupParams) async {
+    final operation = super.setupConfig(setupParams);
+    _pendingConfig = operation;
+    try {
+      return await operation;
+    } finally {
+      if (identical(_pendingConfig, operation)) _pendingConfig = null;
+    }
+  }
+
   @override
   Future<bool> startListener() async {
-    await super.startListener();
+    final config = _pendingConfig;
+    if (config != null && (await config).isNotEmpty) return false;
     return await _service?.start() ?? false;
   }
 
   @override
-  Future<bool> stopListener() async {
-    final serviceStopped = await _service?.stop() ?? false;
-    await super.stopListener();
-    return serviceStopped;
-  }
+  Future<bool> stopListener() async => await _service?.stop() ?? false;
 
   @override
   Future<T?> invokeMethod<T>({

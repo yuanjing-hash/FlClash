@@ -13,11 +13,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"syscall"
+	"time"
 
 	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/process"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/dns"
+	"github.com/metacubex/mihomo/hub/route"
 	"github.com/metacubex/mihomo/listener/sing_tun"
 	"github.com/metacubex/mihomo/log"
 )
@@ -372,6 +374,54 @@ func StopListener() {
 	if isRunning.Load() {
 		handleStopListener()
 	}
+}
+
+func PauseForRoot() bool {
+	defer recoverExport("pauseForRoot")
+	configMu.Lock()
+	var controllers []string
+	if currentConfig != nil && currentConfig.Controller != nil {
+		controllers = []string{currentConfig.Controller.ExternalController, currentConfig.Controller.ExternalControllerTLS}
+	}
+	configMu.Unlock()
+	SetEventListener(nil)
+	handleStopTun()
+	handleShutdown()
+	dns.ReCreateServer("", nil, nil)
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		route.ReCreateServer(&route.Config{})
+		time.Sleep(25 * time.Millisecond)
+		closed := true
+		for _, address := range controllers {
+			host, port, err := net.SplitHostPort(address)
+			if err != nil {
+				continue
+			}
+			if host == "" || host == "0.0.0.0" {
+				host = "127.0.0.1"
+			}
+			if host == "::" {
+				host = "::1"
+			}
+			connection, err := net.DialTimeout("tcp", net.JoinHostPort(host, port), 50*time.Millisecond)
+			if err == nil {
+				closed = false
+				_ = connection.Close()
+			}
+		}
+		if closed {
+			return true
+		}
+		if time.Now().After(deadline) {
+			return false
+		}
+	}
+}
+
+func ResumeAfterRoot() {
+	defer recoverExport("resumeAfterRoot")
+	publishRoute(routeState())
 }
 
 var forceGCPending atomic.Bool

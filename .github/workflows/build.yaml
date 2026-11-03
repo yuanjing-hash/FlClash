@@ -34,6 +34,10 @@ jobs:
           fetch-depth: 0
           submodules: true
 
+      - name: Fetch upstream changelog history
+        if: github.repository == 'yuanjing-hash/FlClash' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/'))
+        run: git fetch --no-tags https://github.com/chen08209/FlClash.git tag v0.8.96 tag v0.8.97 tag v0.8.98 tag v0.8.99 tag v0.9.0 tag v0.9.1
+
       - name: Test git hooks
         run: bash tool/hooks/test.sh
 
@@ -100,7 +104,7 @@ jobs:
 
   desktop:
     name: Desktop ${{ matrix.platform }}
-    if: github.repository == 'yuanjing-hash/FlClash' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
+    if: github.repository == 'chen08209/FlClash' && (startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch')
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -185,16 +189,17 @@ jobs:
         env:
           CGO_ENABLED: 0
         run: |
+          sh ../tool/prepare_core.sh
           if ! compgen -G '*_test.go' > /dev/null; then
             echo 'No Go tests found in core/; the test step would pass vacuously.' >&2
             exit 1
           fi
-          test -z "$(gofmt -l ./*.go ./cmd ./mobile ./platform ./tun)" || {
-            gofmt -l ./*.go ./cmd ./mobile ./platform ./tun >&2
+          test -z "$(gofmt -l ./*.go ./cmd ./mobile ./platform ./tun ./rootbridge)" || {
+            gofmt -l ./*.go ./cmd ./mobile ./platform ./tun ./rootbridge >&2
             exit 1
           }
-          go test -count=1 .
-          go vet . ./cmd/...
+          go test -count=1 . ./rootbridge
+          go vet . ./cmd/... ./rootbridge
           GOOS=linux go vet ./platform
 
       - name: Validate the Android core library
@@ -251,6 +256,9 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
         with:
           cache-read-only: ${{ github.ref != 'refs/heads/main' && github.ref != 'refs/heads/dev' }}
+
+      - name: Validate Root runtime scripts
+        run: sh android/root-tun/tests/run.sh
 
       - name: Run Android unit tests
         working-directory: android
@@ -321,8 +329,12 @@ jobs:
 
   build:
     name: Android APK
-    # Every push (any branch or v* tag) and manual runs build APKs; PR events reuse the branch push run.
-    if: github.repository == 'yuanjing-hash/FlClash' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    # Every push (any branch or v* tag) and manual runs build APKs. PRs into the integration branch
+    # also build, because a head branch cut before the fork CI landed runs the upstream workflow on push.
+    if: >-
+      github.repository == 'yuanjing-hash/FlClash' && (
+        github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+        (github.event_name == 'pull_request' && github.base_ref == 'feature/root-tun-integration'))
     runs-on: ubuntu-latest
     outputs:
       stable: ${{ steps.version.outputs.stable }}
@@ -383,10 +395,11 @@ jobs:
       - name: Setup Android signing
         id: signing
         env:
-          KEYSTORE: ${{ secrets.KEYSTORE }}
-          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
-          STORE_PASSWORD: ${{ secrets.STORE_PASSWORD }}
-          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          # PR builds get none of the signing secrets and stay debug-signed; they are only used on push and manual runs.
+          KEYSTORE: ${{ github.event_name != 'pull_request' && secrets.KEYSTORE || '' }}
+          KEY_ALIAS: ${{ github.event_name != 'pull_request' && secrets.KEY_ALIAS || '' }}
+          STORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.STORE_PASSWORD || '' }}
+          KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.KEY_PASSWORD || '' }}
         run: |
           if [[ -n "$KEYSTORE" && -n "$KEY_ALIAS" && -n "$STORE_PASSWORD" && -n "$KEY_PASSWORD" ]]; then
             printf '%s' "$KEYSTORE" | base64 --decode > android/app/keystore.jks
@@ -397,6 +410,10 @@ jobs:
             } >> android/local.properties
             echo 'signed=true' >> "$GITHUB_OUTPUT"
           else
+            if [[ "$IS_STABLE" == true ]]; then
+              echo 'A stable release requires all four Android signing secrets.' >&2
+              exit 1
+            fi
             echo 'signed=false' >> "$GITHUB_OUTPUT"
             echo 'Signing secrets unavailable; building debug-signed APKs for workflow artifacts.'
           fi
@@ -460,6 +477,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Fetch upstream changelog history
+        run: git fetch --no-tags https://github.com/chen08209/FlClash.git tag v0.8.96 tag v0.8.97 tag v0.8.98 tag v0.8.99 tag v0.9.0 tag v0.9.1
+
       - name: Download signed APKs
         uses: actions/download-artifact@v4
         with:
@@ -509,6 +529,7 @@ jobs:
       - name: Release Android APKs
         uses: softprops/action-gh-release@v2
         with:
+          name: FlClash TUN ${{ github.ref_name }}
           files: |
             ./dist/*.apk
             ./dist/SHA256SUMS

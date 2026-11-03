@@ -59,6 +59,13 @@ internal class ServiceStateMachine(private val host: ServiceStateHost) {
 
     val runState = mutableRunState.asStateFlow()
 
+    val currentSharedState: SharedState
+        get() {
+            val current = sharedState
+            if (current.vpnOptions == null) return host.loadSharedState()
+            return current.takeIf { it.setupParams != null } ?: current.copy(setupParams = host.loadSharedState().setupParams)
+        }
+
     val isRunRequested: Boolean
         get() = arbiter.isRunningRequested
 

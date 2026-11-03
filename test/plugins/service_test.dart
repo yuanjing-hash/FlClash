@@ -27,6 +27,13 @@ class _RecordingStopListener with ServiceListener {
   void onServiceStopped() => stops++;
 }
 
+class _RecordingRunTimeListener with ServiceListener {
+  final startedAt = <DateTime?>[];
+
+  @override
+  void onServiceRunTimeChanged(DateTime? value) => startedAt.add(value);
+}
+
 class _ThrowingListener with ServiceListener {
   var called = false;
 
@@ -38,6 +45,11 @@ class _ThrowingListener with ServiceListener {
 
   @override
   void onServiceStopped() {
+    throw StateError('listener boom');
+  }
+
+  @override
+  void onServiceRunTimeChanged(DateTime? startedAt) {
     throw StateError('listener boom');
   }
 }
@@ -168,6 +180,90 @@ void main() {
       expect(sent['currentProfileName'], 'profile');
       expect(sent['onlyStatisticsProxy'], isTrue);
     });
+  });
+
+  group('run time reports', () {
+    late _RecordingRunTimeListener listener;
+
+    Future<void> reportRunTime(int revision, int startedAt) async {
+      await TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .handlePlatformMessage(
+            channelName,
+            codec.encodeMethodCall(
+              MethodCall('runTime', {
+                'revision': revision,
+                'startedAt': startedAt,
+              }),
+            ),
+            null,
+          );
+    }
+
+    setUp(() {
+      mockChannel((_) async => true);
+      listener = _RecordingRunTimeListener();
+      Service().addListener(listener);
+    });
+
+    tearDown(() => Service().removeListener(listener));
+
+    test(
+      'reports a root start, running time and failed or stopped run',
+      () async {
+        await Service().start();
+        final revision = calls.last.arguments as int;
+
+        await reportRunTime(revision, 0);
+        await reportRunTime(revision, 1234);
+        await reportRunTime(revision, 0);
+
+        expect(listener.startedAt, [
+          null,
+          DateTime.fromMillisecondsSinceEpoch(1234),
+          null,
+        ]);
+      },
+    );
+
+    test('drops a running report superseded by a newer stop', () async {
+      await Service().start();
+      final stale = calls.last.arguments as int;
+      await Service().stop();
+      final current = calls.last.arguments as int;
+
+      await reportRunTime(stale, 1234);
+      await reportRunTime(current, 0);
+
+      expect(listener.startedAt, [null]);
+    });
+
+    test('drops a failure report superseded by a newer start', () async {
+      await Service().stop();
+      final stale = calls.last.arguments as int;
+      await Service().start();
+      final current = calls.last.arguments as int;
+
+      await reportRunTime(stale, 0);
+      await reportRunTime(current, 1234);
+
+      expect(listener.startedAt, [DateTime.fromMillisecondsSinceEpoch(1234)]);
+    });
+
+    test(
+      'a failing listener does not block the next run time listener',
+      () async {
+        final throwing = _ThrowingListener();
+        Service().removeListener(listener);
+        Service().addListener(throwing);
+        Service().addListener(listener);
+        addTearDown(() => Service().removeListener(throwing));
+        await Service().start();
+
+        await reportRunTime(calls.last.arguments as int, 1234);
+
+        expect(listener.startedAt, [DateTime.fromMillisecondsSinceEpoch(1234)]);
+      },
+    );
   });
 
   group('stop reports', () {

@@ -152,4 +152,25 @@ void main() {
       expect(await preferences.getBootRecord(), isNull);
     });
   });
+
+  group('Root TUN prompt history', () {
+    test('defaults to an empty history', () async {
+      expect(await preferences.getRootTunPromptHistory(), isEmpty);
+    });
+
+    test('round-trips history and replaces the previous session', () async {
+      await preferences.saveRootTunPromptHistory(['boot1', 'CLEANUP_FAILED']);
+      expect(await preferences.getRootTunPromptHistory(), [
+        'boot1',
+        'CLEANUP_FAILED',
+      ]);
+      await preferences.saveRootTunPromptHistory(['boot2']);
+      expect(await preferences.getRootTunPromptHistory(), ['boot2']);
+    });
+
+    test('survives an entry with the wrong type', () async {
+      await store.setString('rootTunPromptHistory', 'not a string list');
+      expect(await preferences.getRootTunPromptHistory(), isEmpty);
+    });
+  });
 }

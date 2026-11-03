@@ -15,14 +15,18 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
-class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
+class ServicePlugin :
+    FlutterPlugin,
+    MethodChannel.MethodCallHandler {
     private lateinit var messenger: BinaryMessenger
     private lateinit var channel: MethodChannel
     private lateinit var coreChannel: MethodChannel
     private lateinit var scope: CoroutineScope
     private val gson = Gson()
     private var commandRevision = 0
+    private var stateRevision = 0L
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -30,12 +34,13 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         channel = MethodChannel(messenger, SERVICE_CHANNEL)
         channel.setMethodCallHandler(this)
         // Serial: watchRoute keeps the latest intent by the order calls reach the Core.
-        coreChannel = MethodChannel(
-            messenger,
-            CORE_CHANNEL,
-            StandardMethodCodec.INSTANCE,
-            messenger.makeBackgroundTaskQueue(),
-        )
+        coreChannel =
+            MethodChannel(
+                messenger,
+                CORE_CHANNEL,
+                StandardMethodCodec.INSTANCE,
+                messenger.makeBackgroundTaskQueue(),
+            )
         coreChannel.setMethodCallHandler(::onCoreMethodCall)
     }
 
@@ -46,7 +51,10 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         ServiceController.setEventListener(null)
     }
 
-    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+    override fun onMethodCall(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ) {
         when (call.method) {
             "init" -> initialize(result)
             "shutdown" -> shutdown(result)
@@ -58,7 +66,10 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
     }
 
-    private fun onCoreMethodCall(call: MethodCall, result: MethodChannel.Result) {
+    private fun onCoreMethodCall(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ) {
         when (call.method) {
             "invokeMethod" -> invokeMethod(call, result)
             else -> result.notImplemented()
@@ -66,9 +77,13 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
     }
 
     private fun initialize(result: MethodChannel.Result) {
-        ServiceController.setEventListener(::sendEvent)
-            .onSuccess { result.success("") }
-            .onFailure { error -> result.success(error.message.orEmpty()) }
+        scope.launch {
+            ServiceState.awaitCoreAttachment()
+            ServiceController
+                .setEventListener(::sendEvent)
+                .onSuccess { result.success("") }
+                .onFailure { error -> result.success(error.message.orEmpty()) }
+        }
     }
 
     private fun shutdown(result: MethodChannel.Result) {
@@ -76,17 +91,21 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         result.success(true)
     }
 
-    private fun invokeMethod(call: MethodCall, result: MethodChannel.Result) {
+    private fun invokeMethod(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ) {
         val data = call.arguments as? String
         if (data == null) {
             result.error("INVALID_ARGUMENT", "Method call payload must be a string", null)
             return
         }
-        ServiceController.invokeMethod(data) { response ->
-            result.success(response)
-        }.onFailure { error ->
-            result.error("CORE_ERROR", error.message, null)
-        }
+        ServiceController
+            .invokeMethod(data) { response ->
+                result.success(response)
+            }.onFailure { error ->
+                result.error("CORE_ERROR", error.message, null)
+            }
     }
 
     private fun getRunTime(result: MethodChannel.Result) {
@@ -95,28 +114,41 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         }
     }
 
-    private fun syncState(call: MethodCall, result: MethodChannel.Result) {
+    private fun syncState(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ) {
         val data = call.arguments as? String
-        val state = runCatching {
-            gson.fromJson(data, SharedState::class.java)
-        }.getOrNull()
-        if (state == null) {
-            result.success("Invalid shared state")
-            return
-        }
+        val revision = ++stateRevision
         scope.launch {
-            ServiceState.syncSharedState(state)
-            result.success("")
+            val state = runCatching { gson.fromJson(data, SharedState::class.java) }.getOrNull()
+            if (state == null) {
+                result.success("Invalid shared state")
+                return@launch
+            }
+            withContext(Dispatchers.Main) {
+                if (revision == stateRevision) ServiceState.syncSharedState(state)
+                result.success("")
+            }
         }
     }
 
-    private fun start(call: MethodCall, result: MethodChannel.Result) {
+    private fun start(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ) {
         commandRevision = call.arguments as? Int ?: commandRevision
-        ServiceState.requestStart()
+        val started = ServiceState.requestStart()
         result.success(true)
+        scope.launch {
+            if (!started.await()) notifyRunTimeChanged()
+        }
     }
 
-    private fun stop(call: MethodCall, result: MethodChannel.Result) {
+    private fun stop(
+        call: MethodCall,
+        result: MethodChannel.Result,
+    ) {
         commandRevision = call.arguments as? Int ?: commandRevision
         ServiceState.requestStop()
         result.success(true)
@@ -127,6 +159,16 @@ class ServicePlugin : FlutterPlugin, MethodChannel.MethodCallHandler {
         scope.launch(Dispatchers.Main) {
             if (!ServiceState.isRunRequested) {
                 channel.invokeMethod("stopped", commandRevision)
+            }
+        }
+    }
+
+    fun notifyRunTimeChanged() {
+        scope.launch(Dispatchers.Main) {
+            val revision = commandRevision
+            val startedAt = ServiceState.awaitRunTime()
+            if (revision == commandRevision) {
+                channel.invokeMethod("runTime", mapOf("revision" to revision, "startedAt" to startedAt))
             }
         }
     }

@@ -311,6 +311,42 @@ void main() {
     );
   });
 
+  group('native run time reports', () {
+    test(
+      'mirrors root start and failure without issuing lifecycle commands',
+      () {
+        final setup = container.read(setupActionProvider.notifier);
+        final startedAt = DateTime.now().subtract(const Duration(seconds: 5));
+
+        setup.syncRunTime(startedAt);
+        expect(container.read(isStartProvider), isTrue);
+        expect(container.read(runTimeProvider), greaterThanOrEqualTo(5000));
+
+        setup.syncRunTime(null);
+        expect(container.read(isStartProvider), isFalse);
+        expect(container.read(runTimeProvider), isNull);
+        expect(action.coreRunningCalls, isEmpty);
+        expect(action.applyProfileCalls, 0);
+      },
+    );
+
+    test(
+      'clears the optimistic running display when root startup fails',
+      () async {
+        markInitialized();
+        final setup = container.read(setupActionProvider.notifier);
+        await setup.setRunning(true);
+        expect(container.read(isStartProvider), isTrue);
+
+        setup.syncRunTime(null);
+
+        expect(container.read(isStartProvider), isFalse);
+        expect(container.read(runTimeProvider), isNull);
+        expect(action.coreRunningCalls, [true]);
+      },
+    );
+  });
+
   group('stop cleanup', () {
     test('resets traffic counters', () async {
       markInitialized();

@@ -12,6 +12,7 @@ import 'package:fl_clash/views/logs.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart' show Override;
 
@@ -19,6 +20,19 @@ import '../helpers/glyph_finders.dart';
 import '../helpers/test_app.dart';
 
 void main() {
+  const rootTunChannel = MethodChannel('$packageName/root_tun');
+  setUp(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(
+          rootTunChannel,
+          (_) async => throw MissingPluginException(),
+        );
+  });
+  tearDown(() {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(rootTunChannel, null);
+  });
+
   testWidgets('back layers are consumed from inner to outer', (tester) async {
     var innerActive = true;
     var outerActive = true;

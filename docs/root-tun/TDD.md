@@ -416,4 +416,3 @@ ADR 已采纳 B（待真机验证）：N1 在 KernelSU 真机上成功建 TUN �
 | 4 | [#29](https://github.com/yuanjing-hash/FlClash/issues/29) | 授权撤销检测：App 侧每 ≤5s 做一次 su 探测，root 侧按管理器的授权记录判断；撤销后清理、关闭自启，报 `ROOT_PERMISSION_REVOKED` / `AUTOSTART_ROOT_REVOKED` | US-11 AC3 |
 
 偏差 1（控制通道）的去留不在上面 4 项里，按 §6.4 的规定在发布前评审。偏差 3（诊断采集）在本轮返工中完成。
-

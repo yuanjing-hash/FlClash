@@ -1,0 +1,41 @@
+mode: rule
+log-level: debug
+ipv6: false
+allow-lan: false
+external-controller: 127.0.0.1:19090
+secret: root-tun-b-spike
+geo-auto-update: false
+profile:
+  store-selected: false
+  store-fake-ip: false
+tun:
+  enable: true
+  device: FlRootB
+  stack: gvisor
+  mtu: 1500
+  auto-route: true
+  auto-redirect: false
+  auto-detect-interface: true
+  strict-route: false
+  iproute2-table-index: 20220
+  iproute2-rule-index: 9000
+  exclude-uid: [0]
+  dns-hijack: ['any:53', 'tcp://any:53']
+dns:
+  enable: true
+  listen: 127.0.0.1:1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+  fake-ip-filter: []
+  default-nameserver: [1.1.1.1, 8.8.8.8]
+  nameserver: [1.1.1.1, 8.8.8.8]
+  proxy-server-nameserver: [1.1.1.1, 8.8.8.8]
+# 在 proxies 填入测试节点，并把 OUT 的 DIRECT 换成节点名。
+proxies: []
+proxy-groups:
+  - name: OUT
+    type: select
+    proxies: [DIRECT]
+rules:
+  - MATCH,OUT

@@ -45,13 +45,6 @@ final _rowCases = <_RowCase>[
     'TUN',
     (container) => container.read(patchClashConfigProvider).tun.enable,
   ),
-  _RowCase(
-    'VPN',
-    const VpnCard(),
-    'VPN',
-    (container) => container.read(vpnSettingProvider).enable,
-    initial: true,
-  ),
 ];
 
 void main() {

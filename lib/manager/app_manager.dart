@@ -118,10 +118,10 @@ class AppEnvManager extends ConsumerWidget {
     if (safeMode) {
       return 'SAFE MODE';
     }
-    if (!globalState.isPre) {
+    if (kDebugMode || !globalState.isPre) {
       return null;
     }
-    return kDebugMode ? 'DEBUG' : globalState.appEnv.toUpperCase();
+    return globalState.appEnv.toUpperCase();
   }
 
   @override

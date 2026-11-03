@@ -2,17 +2,19 @@ import 'dart:math' as math;
 
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/common/service_probe.dart';
+import 'package:fl_clash/common/root_tun_labels.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/features/features.dart';
 import 'package:fl_clash/features/ip_quality/labels.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/ip_quality.dart';
+import 'package:fl_clash/providers/connection_status.dart';
+import 'package:fl_clash/providers/root_tun.dart';
 import 'package:fl_clash/providers/outbound_ip.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/providers/routed_probe.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
-import 'package:fl_clash/views/dashboard/probe_start_hold.dart';
 import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:fl_clash/widgets/widgets.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -40,8 +42,7 @@ class CurrentOutboundCard extends ConsumerStatefulWidget {
       _CurrentOutboundCardState();
 }
 
-class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
-    with ProbeStartHold<CurrentOutboundCard> {
+class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard> {
   late final OutboundIpProbe _probe;
 
   @override
@@ -70,12 +71,15 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
       profilesProvider.select((state) => state.isNotEmpty),
     );
     final isStart = ref.watch(isStartProvider);
+    final connection = ref.watch(connectionPhaseProvider());
+    final ready = connection == ConnectionPhase.running;
+    final canProbe = connection.canProbe;
     final suspended = isStart && ref.watch(suspendProvider);
     final entry = ref.watch(
       outboundIpProbeProvider.select((state) => state.entryOf(routedOutbound)),
     );
-    final ipInfo = entry.value;
-    final phase = shownPhase(entry);
+    final ipInfo = canProbe ? entry.value : null;
+    final phase = entry.phase;
     final failed = phase == ProbePhase.failed && ipInfo == null;
     final qualityState = ipInfo == null
         ? null
@@ -88,9 +92,22 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
     final appLocalizations = context.appLocalizations;
     final colorScheme = context.colorScheme;
     final colors = DashboardColors.of(context);
-    final (chipLabel, chipTone) = suspended
+    final (chipLabel, chipTone) = !canProbe
+        ? (
+            switch (connection) {
+              ConnectionPhase.starting => appLocalizations.rootTunStateStarting,
+              ConnectionPhase.awaitingAuth =>
+                appLocalizations.rootTunStateAwaitingAuth,
+              ConnectionPhase.recovering =>
+                appLocalizations.rootTunStateRecovering,
+              ConnectionPhase.stopping => appLocalizations.rootTunStateStopping,
+              _ => appLocalizations.rootTunStateFailed,
+            },
+            DashboardChipTone.warn,
+          )
+        : suspended
         ? (appLocalizations.suspended, DashboardChipTone.warn)
-        : isStart
+        : ready
         ? (appLocalizations.running, DashboardChipTone.ok)
         : (appLocalizations.notRunning, DashboardChipTone.idle);
     return DashboardCard(
@@ -154,30 +171,58 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
                           DashboardChip(
                             label: chipLabel,
                             tone: chipTone,
-                            dot: isStart,
+                            dot: ready,
                           ),
                         ],
                       ),
                       SizedBox(height: metrics.ipTop),
-                      _ExitRow(
-                        info: ipInfo,
-                        failed: failed,
-                        loading: loading,
-                        checking: phase == ProbePhase.probing || qualityLoading,
-                        onRefresh: () => _refresh(ipInfo?.ip),
-                        quality: quality,
-                        active: isStart,
-                        metrics: metrics,
-                        large: !density.isDesktop,
-                      ),
+                      if (!canProbe)
+                        SizedBox(
+                          height: density.isDesktop ? metrics.badgeSize : 76,
+                          child: Row(
+                            spacing: 12,
+                            children: [
+                              if (connection != ConnectionPhase.failed)
+                                const SizedBox.square(
+                                  dimension: 22,
+                                  child: CommonCircleLoading(),
+                                )
+                              else
+                                const GlyphIcon(AppGlyphs.warning, size: 22),
+                              Expanded(
+                                child: Text(
+                                  connection == ConnectionPhase.failed
+                                      ? _failureLabel(chipLabel)
+                                      : chipLabel,
+                                  maxLines: 3,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: AppTextStyle.footnote.of(context),
+                                ),
+                              ),
+                            ],
+                          ),
+                        )
+                      else
+                        _ExitRow(
+                          info: ipInfo,
+                          failed: failed,
+                          loading: loading,
+                          checking:
+                              phase == ProbePhase.probing || qualityLoading,
+                          onRefresh: () => _refresh(ipInfo?.ip),
+                          quality: quality,
+                          active: ready,
+                          metrics: metrics,
+                          large: !density.isDesktop,
+                        ),
                       if (density.isDesktop)
                         const Spacer()
                       else
                         const SizedBox(height: 16),
                       _Cells(
                         quality: quality,
-                        loading: loading,
-                        active: isStart && !suspended,
+                        loading: canProbe && loading,
+                        active: ready && !suspended,
                         gap: metrics.cellGap,
                       ),
                     ],
@@ -188,8 +233,13 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
                   child: Center(
                     child: _StartToggle(
                       size: metrics.buttonSize,
-                      enabled: hasProfile,
-                      running: isStart,
+                      enabled:
+                          hasProfile && connection != ConnectionPhase.stopping,
+                      running:
+                          connection != ConnectionPhase.stopped &&
+                          connection != ConnectionPhase.failed,
+                      starting:
+                          !canProbe && connection != ConnectionPhase.failed,
                       suspended: suspended,
                     ),
                   ),
@@ -200,6 +250,15 @@ class _CurrentOutboundCardState extends ConsumerState<CurrentOutboundCard>
         ],
       ),
     );
+  }
+
+  String _failureLabel(String fallback) {
+    final snapshot = ref.read(rootTunControllerProvider).snapshot;
+    if (snapshot?.stale == true) return context.appLocalizations.rootTunStale;
+    final code = snapshot?.lastErrorCode;
+    return code == null
+        ? fallback
+        : rootTunErrorLabel(code, context.appLocalizations);
   }
 }
 
@@ -701,12 +760,14 @@ class _StartToggle extends ConsumerStatefulWidget {
     required this.enabled,
     required this.running,
     required this.suspended,
+    this.starting = false,
   });
 
   final double size;
   final bool enabled;
   final bool running;
   final bool suspended;
+  final bool starting;
 
   @override
   ConsumerState<_StartToggle> createState() => _StartToggleState();
@@ -753,7 +814,9 @@ class _StartToggleState extends ConsumerState<_StartToggle>
   }
 
   void _toggle() {
-    ref.read(commonActionProvider.notifier).toggleRunning();
+    ref
+        .read(commonActionProvider.notifier)
+        .toggleRunning(running: !widget.running);
   }
 
   @override
@@ -825,7 +888,12 @@ class _StartToggleState extends ConsumerState<_StartToggle>
               child: SizedBox.square(
                 dimension: size,
                 child: Center(
-                  child: widget.suspended
+                  child: widget.starting
+                      ? SizedBox.square(
+                          dimension: size * 0.3,
+                          child: CommonCircleLoading(color: ink),
+                        )
+                      : widget.suspended
                       ? GlyphIcon(
                           AppGlyphs.wifiOff,
                           size: size * 0.34,
