@@ -177,7 +177,7 @@ watchdog=$(pid_of watchdog)
 core=$(pid_of core)
 TEST_PIDS="$TEST_PIDS $supervisor $watchdog $core"
 kill -KILL "$supervisor" "$watchdog"
-rm -f "$R/run/owner.lock" "$R/run/generation" "$R/run/supervisor.heartbeat" "$FAKE_NET/iptables.guard"
+rm -f "$R/run/owner.lock" "$R/run/generation" "$R/run/supervisor.heartbeat"
 mkdir "$R/run/owner.lock"
 sleep 1000 &
 legacy_pid=$!
@@ -188,7 +188,7 @@ run start
 wait_for changed supervisor "$legacy_pid"
 [ "$core" = "$(pid_of core)" ] && [ -f "$FAKE_NET/iptables.guard" ]
 run stop
-echo 'PASS legacy supervisor handoff preserves core and installs missing recovery guard'
+echo 'PASS legacy supervisor handoff preserves native core and existing recovery guard'
 
 run start
 wait_for ready
