@@ -6,6 +6,14 @@ TEST_TMP=${TMPDIR:-/tmp}
 WORK=$(mktemp -d "$TEST_TMP/flclash-cleanup.XXXXXX")
 case "$WORK" in "$TEST_TMP"/flclash-cleanup.*) ;; *) exit 1 ;; esac
 trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/bin"
+cat > "$WORK/bin/iptables-save" <<'SAVE'
+#!/bin/sh
+printf '*filter\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n'
+SAVE
+cp "$WORK/bin/iptables-save" "$WORK/bin/ip6tables-save"
+chmod +x "$WORK/bin/iptables-save" "$WORK/bin/ip6tables-save"
+export PATH="$WORK/bin:$PATH"
 cat > "$WORK/stubs.sh" <<'STUBS'
 ticks() { printf '1\n'; }
 alive() { return 1; }
@@ -64,8 +72,6 @@ ip6tables() {
     fi
     iptables "$@"
 }
-iptables-save() { printf '*filter\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n'; }
-ip6tables-save() { iptables-save; }
 STUBS
 for scenario in incomplete stale-script missing-table missing-ipv6-nat previous-boot owned reserved-rules inspect-rules inspect-routes reserved-table reserved-link reserved-chain inspect-firewall missing-ipv4-nat denied-nat denied-ipv6-nat broken-ipv6-nat occupied-nat unsafe-tree; do
     R=$WORK/$scenario

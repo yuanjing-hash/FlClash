@@ -8,6 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/metacubex/mihomo/config"
 	"github.com/metacubex/mihomo/log"
@@ -63,7 +64,19 @@ func TestRootDiagnosticBoundsErrorsAndRetainsTheStoppedSession(t *testing.T) {
 	}
 	changed, stop := startRootNetworkDiagnostics(directory)
 	log.Warnln("root diagnostic test: failed connection")
-	changed()
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		changed()
+		data, err := os.ReadFile(path)
+		if err == nil && strings.Contains(string(data), "failed connection") {
+			break
+		}
+		if time.Now().After(deadline) {
+			stop()
+			t.Fatal("diagnostic did not observe the warning before shutdown")
+		}
+		time.Sleep(time.Millisecond)
+	}
 	stop()
 	previous, err := os.ReadFile(filepath.Join(directory, "network-state.previous.json"))
 	if err != nil || !strings.Contains(string(previous), "previous-session") {

@@ -4,6 +4,11 @@ TESTS=$(CDPATH='' cd -- "$(dirname "$0")" && pwd)
 SOURCE=${FLCLASH_TEST_RUNTIME:-$TESTS/../../app/src/main/assets/root-tun/runtime.sh}
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/flclash-options.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/bin"
+printf '#!/bin/sh\ncat > "$FLCLASH_TEST_WORK/filter4"\n' > "$WORK/bin/iptables-restore"
+printf '#!/bin/sh\ncat > "$FLCLASH_TEST_WORK/filter6"\n' > "$WORK/bin/ip6tables-restore"
+chmod +x "$WORK/bin/iptables-restore" "$WORK/bin/ip6tables-restore"
+export FLCLASH_TEST_WORK="$WORK" PATH="$WORK/bin:$PATH"
 R=$WORK/runtime
 mkdir -p "$R/config"
 sed -n '/^configure_routes() {/,/^configure_system_proxy() {/p' "$SOURCE" | sed '$d' > "$WORK/functions.sh"
@@ -15,8 +20,6 @@ ip() {
 }
 iptables() { printf '%s\n' "$*" >> "$WORK/guard4"; }
 ip6tables() { printf '%s\n' "$*" >> "$WORK/guard6"; }
-iptables-restore() { cat > "$WORK/filter4"; }
-ip6tables-restore() { cat > "$WORK/filter6"; }
 printf '1\n' > "$R/config/tun.enabled"
 printf '1\n' > "$R/config/ipv6.enabled"
 printf '1\n' > "$R/config/allow-bypass"

@@ -4,6 +4,11 @@ TESTS=$(CDPATH='' cd -- "$(dirname "$0")" && pwd)
 SOURCE=${FLCLASH_TEST_RUNTIME:-$TESTS/../../app/src/main/assets/root-tun/runtime.sh}
 WORK=$(mktemp -d "${TMPDIR:-/tmp}/flclash-ip-rule.XXXXXX")
 trap 'rm -rf "$WORK"' EXIT
+mkdir -p "$WORK/bin"
+printf '#!/bin/sh\ncat >/dev/null\n' > "$WORK/bin/iptables-restore"
+cp "$WORK/bin/iptables-restore" "$WORK/bin/ip6tables-restore"
+chmod +x "$WORK/bin/iptables-restore" "$WORK/bin/ip6tables-restore"
+export PATH="$WORK/bin:$PATH"
 R=$WORK/runtime STATE=$WORK/runtime/state BOOT=test-boot
 mkdir -p "$R/config" "$STATE"
 printf '1\n' > "$R/config/tun.enabled"
@@ -20,8 +25,6 @@ update_private_dns() { :; }
 emit_filter() { echo COMMIT; }
 iptables() { :; }
 ip6tables() { :; }
-iptables-restore() { cat >/dev/null; }
-ip6tables-restore() { cat >/dev/null; }
 ip() {
     printf '%s\n' "$*" >> "$WORK/commands"
     case "$*" in
