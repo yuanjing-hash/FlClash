@@ -12,7 +12,7 @@ export FAKE_NET="$WORK/net"
 export PATH="$WORK/bin:$PATH"
 TEST_PATH=$PATH
 mkdir -p "$FAKE_NET" "$WORK/bin" "$WORK/ksu" "$WORK/ap" "$WORK/service.d"
-for stub in pm log ip iptables ip6tables iptables-save ip6tables-save settings nc; do
+for stub in pm log ip iptables ip6tables iptables-save ip6tables-save iptables-restore ip6tables-restore settings nc; do
     ln -s "$TESTS/network-stub.sh" "$WORK/bin/$stub"
 done
 cat > "$WORK/bin/magisk" <<'MAGISK'

@@ -12,7 +12,7 @@ trap finish EXIT
 export FAKE_NET="$WORK/net"
 export PATH="$WORK/bin:$PATH"
 mkdir -p "$FAKE_NET" "$WORK/bin" "$WORK/data" "$WORK/service.d"
-for stub in pm log ip iptables ip6tables iptables-save ip6tables-save settings; do
+for stub in pm log ip iptables ip6tables iptables-save ip6tables-save iptables-restore ip6tables-restore settings; do
     ln -s "$TESTS/network-stub.sh" "$WORK/bin/$stub"
 done
 sed -e "s|^R=/data/adb/flclash-root$|R=$WORK/runtime|" \
