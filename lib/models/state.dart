@@ -182,6 +182,7 @@ abstract class SharedState with _$SharedState {
   const factory SharedState({
     SetupParams? setupParams,
     VpnOptions? vpnOptions,
+    UpdateParams? updateParams,
     required String stopTip,
     required String startTip,
     required String localNetworkTip,
@@ -196,7 +197,8 @@ abstract class SharedState with _$SharedState {
 }
 
 extension SharedStateExt on SharedState {
-  SharedState get needSyncSharedState => copyWith(setupParams: null);
+  SharedState get needSyncSharedState =>
+      copyWith(setupParams: setupParams?.copyWith(selectedMap: const {}));
 }
 
 @freezed

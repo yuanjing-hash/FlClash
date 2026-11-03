@@ -999,7 +999,7 @@
   "rootTunErrorNetworkRulesApplyFailed": "Could not apply network rules. Changes were rolled back; the network is unaffected.",
   "rootTunErrorDnsTakeoverFailed": "DNS takeover failed. Root TUN stopped to prevent leaks.",
   "rootTunErrorCoreStartFailed": "The proxy core could not start. Check the configuration.",
-  "rootTunErrorStartTimeout": "Root TUN startup timed out (10 seconds). Changes were rolled back.",
+  "rootTunErrorStartTimeout": "Root TUN startup timed out. Changes were rolled back.",
   "rootTunErrorCoreCrashedRecovering": "The proxy core exited unexpectedly. Recovering automatically…",
   "rootTunErrorCoreRecovered": "The proxy recovered automatically.",
   "rootTunErrorCoreRecoveryFailed": "Automatic recovery failed. Direct connectivity was restored; traffic is unproxied.",

@@ -5,6 +5,8 @@ import 'package:fl_clash/core/interface.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/app.dart';
+import 'package:fl_clash/providers/action.dart';
+import 'package:fl_clash/providers/connection_status.dart';
 import 'package:fl_clash/providers/core.dart';
 import 'package:fl_clash/providers/route_state.dart';
 import 'package:fl_clash/providers/state.dart';
@@ -132,6 +134,7 @@ void main() {
       final container = ProviderContainer(
         overrides: [
           initProvider.overrideWithBuild((_, _) => init),
+          setupActionProvider.overrideWithBuild((_, _) => RunProgress.idle),
           coreStatusProvider.overrideWithBuild((_, _) => status),
           runTimeProvider.overrideWithBuild((_, _) => running ? 1 : null),
           suspendProvider.overrideWithValue(false),
@@ -223,6 +226,39 @@ void main() {
       verify(() => core.watchRoute(true)).called(1);
       expect(stateOf(container).synced, isTrue);
     });
+
+    test(
+      'startup blocks route probes and ignores early Core snapshots',
+      () async {
+        final container = ProviderContainer(
+          overrides: [
+            initProvider.overrideWithBuild((_, _) => true),
+            coreStatusProvider.overrideWithBuild(
+              (_, _) => CoreStatus.connected,
+            ),
+            coreHandlerProvider.overrideWithValue(CoreController.scoped(core)),
+            connectionPhaseProvider().overrideWith(
+              (ref) => ref.watch(isStartProvider)
+                  ? ConnectionPhase.running
+                  : ConnectionPhase.starting,
+            ),
+          ],
+        );
+        addTearDown(container.dispose);
+        container.listen(routeTrackerProvider, (_, _) {});
+        final tracker = trackerOf(container)..attach();
+        tracker.applySnapshot(_snapshot);
+        await pumpEventQueue();
+        expect(stateOf(container).live, isFalse);
+        verifyNever(() => core.watchRoute(any()));
+        container.read(runTimeProvider.notifier).value = 1;
+        await pumpEventQueue();
+        verify(() => core.watchRoute(true)).called(1);
+        expect(stateOf(container).live, isTrue);
+        tracker.detach();
+        await pumpEventQueue();
+      },
+    );
 
     test(
       'lets the Core go while the app is hidden and reads it again on return',

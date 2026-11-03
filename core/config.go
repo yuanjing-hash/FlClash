@@ -145,6 +145,9 @@ func applyConfig(params *SetupParams) error {
 		cfg = fallback
 	}
 
+	if rootErr := applyRootOptions(cfg); rootErr != nil {
+		return rootErr
+	}
 	currentConfig = cfg
 	hub.ApplyConfig(cfg)
 	patchSelectGroup(params.SelectedMap)
@@ -208,6 +211,9 @@ func updateConfig(params *UpdateParams) error {
 		skipCertVerify.Store(*params.SkipCertVerify)
 	}
 
+	if err := applyRootOptions(currentConfig); err != nil {
+		return err
+	}
 	updateListeners(currentConfig)
 	for geoType, link := range params.GeoXUrl {
 		setGeoResourceUrl(geoType, link)

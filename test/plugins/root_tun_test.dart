@@ -42,6 +42,11 @@ void main() {
     await plugin.requestAuth();
     final start = await plugin.start();
     expect(start.data!.snapshot.state, RootTunState.starting);
+    for (final mode in [RootTunMode.vpn, RootTunMode.rootTun]) {
+      await plugin.selectMode(mode);
+      expect(calls.last.method, 'selectMode');
+      expect(rootTunMap(calls.last.arguments)['mode'], mode.name);
+    }
     for (final reason in RootTunStopReason.values) {
       await plugin.stop(reason);
       expect(rootTunMap(calls.last.arguments)['reason'], reason.name);

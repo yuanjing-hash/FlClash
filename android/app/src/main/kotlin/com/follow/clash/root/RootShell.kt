@@ -13,6 +13,13 @@ internal data class ShellResult(
     val timedOut: Boolean = false,
 ) {
     val success: Boolean get() = exitCode == 0 && !timedOut
+
+    fun requireSuccess(operation: String) {
+        check(success) {
+            val output = RootDiagnostics.redact("$stderr\n$stdout").trim().take(8_192)
+            "$operation failed: exit=$exitCode timeout=$timedOut\n$output"
+        }
+    }
 }
 
 internal class RootShell(
@@ -28,7 +35,7 @@ internal class RootShell(
         script: String,
         timeoutMs: Long = 2_000,
         input: ByteArray = byteArrayOf(),
-    ): ShellResult = execute(listOf("su", "-c", script), timeoutMs, input)
+    ): ShellResult = execute(listOf("su", "-c", rootCommand(script)), timeoutMs, input)
 
     fun execute(
         arguments: List<String>,
@@ -91,7 +98,22 @@ internal class RootShell(
     }
 
     companion object {
+        internal fun rootCommand(
+            script: String,
+            busyboxCandidates: List<String> =
+                listOf("/data/adb/ksu/bin/busybox", "/data/adb/ap/bin/busybox", "/data/adb/magisk/busybox"),
+        ): String =
+            "for root_busybox in ${busyboxCandidates.joinToString(" ", transform = ::quote)}; do " +
+                "if [ -x \"\$root_busybox\" ]; then export ASH_STANDALONE=1; " +
+                "exec \"\$root_busybox\" sh -c ${quote(script)}; fi; done; exec /system/bin/sh -c ${quote(script)}"
+
         private val observations = ArrayDeque<String>()
+
+        @Synchronized
+        fun note(message: String) {
+            observations.addLast("${System.currentTimeMillis()} $message")
+            if (observations.size > 64) observations.removeFirst()
+        }
 
         @Synchronized
         private fun record(

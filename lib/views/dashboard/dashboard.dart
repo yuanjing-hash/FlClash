@@ -197,8 +197,6 @@ class _DesktopDashboard extends StatelessWidget {
                   const RepaintBoundary(child: OutboundModeBar()),
                 ),
                 sized(controlHeight, row(switches)),
-                if (platform == SupportPlatform.Android)
-                  const RootTunStatusCard(),
                 sized(
                   middleHeight,
                   row(const [(1, IntranetIpCard()), (1, ProfilesCard())]),
@@ -213,7 +211,6 @@ class _DesktopDashboard extends StatelessWidget {
           );
         }
         final rows = [
-          if (platform == SupportPlatform.Android) const RootTunStatusCard(),
           sized(
             topHeight,
             row(const [
@@ -343,8 +340,6 @@ class _MobileDashboard extends ConsumerWidget {
                 child: Column(
                   spacing: gap,
                   children: [
-                    if (platform == SupportPlatform.Android)
-                      const RootTunStatusCard(),
                     for (final widget in widgets)
                       RepaintBoundary(
                         key: cardKeyOf(widget),

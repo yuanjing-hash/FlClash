@@ -1,19 +1,14 @@
-import 'dart:async';
-
 import 'package:fl_clash/common/common.dart';
-import 'package:fl_clash/common/root_tun_labels.dart';
-import 'package:fl_clash/models/root_tun.dart';
-import 'package:fl_clash/providers/root_tun.dart';
+
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
-import 'package:fl_clash/ui/ui.dart';
 import 'package:fl_clash/views/dashboard/layout.dart';
-import 'package:fl_clash/views/dashboard/style.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:material_new_shapes/material_new_shapes.dart';
+
 import 'package:material_ui/material_ui.dart';
 
 import 'card.dart';
+import 'connection_mode.dart';
 
 typedef _RowMetrics = ({
   EdgeInsets padding,
@@ -197,202 +192,16 @@ class NetworkTakeoverTile extends StatelessWidget {
   }
 }
 
-void _setVpn(WidgetRef ref, bool value) => ref
-    .read(vpnSettingProvider.notifier)
-    .update((state) => state.copyWith(enable: value));
-
-/// The VPN switch in the grid's control row, in place of the takeover tiles.
-class VpnTile extends ConsumerWidget {
+class VpnTile extends StatelessWidget {
   const VpnTile({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final appLocalizations = context.appLocalizations;
-    final metrics = _tileMetricsOf(DashboardDensityScope.of(context));
-    final enabled = ref.watch(
-      vpnSettingProvider.select((state) => state.enable),
-    );
-    return DashboardCard(
-      padding: EdgeInsets.zero,
-      child: DashboardSwitchRow(
-        glyph: AppGlyphs.vpn,
-        title: 'VPN',
-        subtitle: metrics.subtitle
-            ? enabled
-                  ? appLocalizations.enabled
-                  : appLocalizations.disabled
-            : null,
-        value: enabled,
-        iconSize: metrics.icon,
-        padding: metrics.padding,
-        radius: metrics.radius,
-        color: Colors.transparent,
-        onTap: () => _setVpn(ref, !enabled),
-        onChanged: (value) => _setVpn(ref, value),
-      ),
-    );
-  }
+  Widget build(BuildContext context) => const ConnectionModeCard(compact: true);
 }
 
-class VpnCard extends ConsumerWidget {
+class VpnCard extends StatelessWidget {
   const VpnCard({super.key});
 
-  static const _iconSize = 48.0;
-
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final appLocalizations = context.appLocalizations;
-    final colorScheme = context.colorScheme;
-    final colors = DashboardColors.of(context);
-    final enabled = ref.watch(
-      vpnSettingProvider.select((state) => state.enable),
-    );
-    void change(bool value) => _setVpn(ref, value);
-    return DashboardCard(
-      semanticLabel: 'VPN',
-      padding: dashboardCardPadding(
-        DashboardDensityScope.of(context),
-      ).copyWith(top: 16, bottom: 16),
-      onTap: () => change(!enabled),
-      child: Row(
-        spacing: 14,
-        children: [
-          ShapeBadge(
-            shape: enabled
-                ? MaterialShapes.cookie6Sided
-                : MaterialShapes.circle,
-            color: enabled ? colorScheme.primary : colors.tone,
-            size: _iconSize,
-            child: GlyphIcon(
-              AppGlyphs.vpn,
-              size: 22,
-              color: enabled
-                  ? colorScheme.onPrimary
-                  : colorScheme.onSurfaceVariant,
-            ),
-          ),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'VPN',
-                  style: AppTextStyle.callout.of(context, emphasized: true),
-                ),
-                Text(
-                  enabled
-                      ? appLocalizations.enabled
-                      : appLocalizations.disabled,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: AppTextStyle.footnote
-                      .of(context)
-                      .copyWith(color: colorScheme.onSurfaceVariant),
-                ),
-              ],
-            ),
-          ),
-          DashboardSwitch(
-            value: enabled,
-            semanticLabel: 'VPN',
-            onChanged: change,
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class RootTunStatusCard extends ConsumerStatefulWidget {
-  const RootTunStatusCard({super.key});
-
-  @override
-  ConsumerState<RootTunStatusCard> createState() => _RootTunStatusCardState();
-}
-
-class _RootTunStatusCardState extends ConsumerState<RootTunStatusCard>
-    with WidgetsBindingObserver {
-  Timer? _bannerTimer;
-  String? _transientCode;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    unawaited(
-      Future<void>.microtask(() async {
-        if (mounted) {
-          await ref.read(rootTunControllerProvider.notifier).detectRoot();
-        }
-      }),
-    );
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    _bannerTimer?.cancel();
-    super.dispose();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      unawaited(ref.read(rootTunControllerProvider.notifier).detectRoot());
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l = context.appLocalizations;
-    final value = ref.watch(rootTunControllerProvider);
-    ref.listen(rootTunControllerProvider.select((state) => state.event), (
-      _,
-      event,
-    ) {
-      _bannerTimer?.cancel();
-      setState(() => _transientCode = event?.code);
-      _bannerTimer = Timer(const Duration(seconds: 5), () {
-        if (mounted) setState(() => _transientCode = null);
-      });
-    });
-    final snapshot = value.snapshot;
-    const bannerCodes = {
-      RootTunCode.coreCrashedRecovering,
-      RootTunCode.coreRecovered,
-      RootTunCode.coreRecoveryFailed,
-      RootTunCode.lastSessionAbnormalExit,
-      RootTunCode.modeSwitching,
-      RootTunCode.alwaysOnVpnConflict,
-      RootTunCode.privateDnsStrict,
-      RootTunCode.autostartFailed,
-    };
-    final codes = <String>{
-      if (snapshot?.lastErrorCode case final code?
-          when bannerCodes.contains(code))
-        code,
-      for (final warning in snapshot?.warnings ?? <String>[])
-        if (bannerCodes.contains(warning)) warning,
-      if (_transientCode case final code? when bannerCodes.contains(code)) code,
-    };
-    final text = snapshot == null
-        ? l.rootTunNoSnapshot
-        : [
-            '${l.rootTunMode}: ${rootTunModeLabel(snapshot.mode, l)} · ${rootTunStateLabel(snapshot.state, l)}',
-            '${l.rootTunManager}: ${rootTunManagerLabel(snapshot.rootManager, l)} · ${rootTunAuthLabel(snapshot.authStatus, l)}',
-            '${l.rootTunAutostart}: ${snapshot.rootTunEnabled && snapshot.autostartEnabled ? l.enabled : l.disabled}',
-            if (snapshot.stale) l.rootTunStale,
-          ].join('\n');
-    return DashboardCard(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        spacing: 8,
-        children: [
-          Text(text, style: AppTextStyle.footnote.of(context)),
-          if (value.channelAvailable == false) Text(l.rootTunNativeUnavailable),
-          for (final code in codes) Text(rootTunErrorLabel(code, l)),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => const ConnectionModeCard();
 }

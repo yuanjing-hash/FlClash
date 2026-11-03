@@ -23,7 +23,7 @@
     <string name="root_tun_network_rules_apply_failed">网络规则写入失败，请检查其他代理或防火墙模块。</string>
     <string name="root_tun_dns_takeover_failed">DNS 接管失败，正在恢复直连。</string>
     <string name="root_tun_core_start_failed">核心启动失败，请检查当前配置并导出诊断日志。</string>
-    <string name="root_tun_start_timeout">Root TUN 启动超过 10 秒，正在回滚。</string>
+    <string name="root_tun_start_timeout">Root TUN 启动超时，正在回滚。</string>
     <string name="root_tun_core_crashed_recovering">核心异常退出，正在自动恢复。</string>
     <string name="root_tun_core_recovered">代理已自动恢复。</string>
     <string name="root_tun_core_recovery_failed">恢复失败，已清理规则并切换直连。</string>

@@ -228,6 +228,7 @@ abstract class UnpackJniLibs : DefaultTask() {
 
 val bindCore =
     tasks.register<GomobileBind>("bindCore") {
+        dependsOn(rootProject.tasks.named("prepareCore"))
         sources.from(
             fileTree(goModule) {
                 exclude("**/*_test.go", "**/testdata/**", "cmd/**", "Clash.Meta/.github/**")
@@ -272,5 +273,6 @@ androidComponents {
 }
 
 dependencies {
+    implementation(libs.gson)
     implementation(files(bindCore.flatMap { it.classesJar }))
 }

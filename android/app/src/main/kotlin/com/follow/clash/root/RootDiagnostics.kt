@@ -8,6 +8,11 @@ import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 
 internal object RootDiagnostics {
+    internal fun startupFailure(
+        phase: String,
+        error: Exception,
+    ): String = redact("phase=$phase ${error.javaClass.simpleName}: ${error.message.orEmpty()}").take(16_384)
+
     fun export(
         context: Context,
         snapshot: RootSnapshot,
@@ -68,8 +73,10 @@ internal object RootDiagnostics {
 
     internal fun redact(value: String): String =
         value
-            .replace(Regex("(?im)(\\b(?:authorization|password|secret|token|private[-_]?key|api[-_]?key)\\s*[:=]).*$"), "$1 [redacted]")
-            .replace(Regex("(?i)(bearer\\s+)[^\\s,}]+"), "$1[redacted]")
+            .replace(
+                Regex("(?im)(\\b(?:authorization|password|secret|token|private[-_]?key|api[-_]?key)['\"]?\\s*[:=]).*$"),
+                "$1 [redacted]",
+            ).replace(Regex("(?i)(bearer\\s+)[^\\s,}]+"), "$1[redacted]")
             .replace(Regex("\\b([a-zA-Z][a-zA-Z0-9+.-]*://)[^/\\s@]+@"), "$1[redacted]@")
             .replace(Regex("(https?://[^\\s?'\\\"]+)\\?[^\\s'\\\"]+"), "$1?[redacted]")
             .replace(Regex("(?i)(?:ss|ssr|vmess|vless|trojan)://[^\\s]+"), "[redacted proxy URL]")
@@ -84,7 +91,7 @@ internal data class RootDiagnosticEvidence(
     companion object {
         private val items =
             "clock boot-state tools boot-evidence auth-data package device grep processes directories runtime-state notifications " +
-                "ipv4 ipv6 iptables ip6tables nft selinux connectivity restore-diff baseline logs"
+                "ipv4 ipv6 routing-options capture-counters core-state core-state-previous iptables ip6tables nft selinux connectivity restore-diff baseline logs"
 
         private fun incompleteManifest(result: ShellResult): String {
             val completed =

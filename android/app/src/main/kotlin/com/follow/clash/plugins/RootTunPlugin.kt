@@ -49,7 +49,7 @@ class RootTunPlugin :
                     when (call.method) {
                         "getState" -> success(backend.snapshot.toMap())
                         "detectRoot" -> backend.detect()
-                        "start", "stop", "requestAuth", "recheckRoot", "cleanupResidue", "setAutostart" ->
+                        "start", "stop", "selectMode", "requestAuth", "recheckRoot", "cleanupResidue", "setAutostart" ->
                             backend.command(
                                 call.method,
                                 args,
@@ -95,7 +95,9 @@ class RootTunPlugin :
     ) {
         val args = arguments as? Map<*, *>
         val afterSeq = args?.get("afterSeq") as? Number
-        if (args?.get("schemaVersion") != 1 || (afterSeq !is Int && afterSeq !is Long) || afterSeq.toLong() < 0 ||
+        if (args?.get("schemaVersion") != 1 ||
+            (afterSeq !is Int && afterSeq !is Long) ||
+            afterSeq.toLong() < 0 ||
             (args["epoch"] != null && args["epoch"] !is String)
         ) {
             sink.error("INVALID_ARGUMENT", "Expected schemaVersion=1, epoch and nonnegative afterSeq", null)

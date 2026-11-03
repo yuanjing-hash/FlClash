@@ -29,24 +29,26 @@ object ServiceState {
                     }
                 }
             },
-            selections = {
-                AndroidServiceStateHost
-                    .loadSharedState()
-                    .setupParams
-                    ?.selectedMap
-                    .orEmpty()
-            },
+            sharedState = { currentSharedState },
+            notifyRunTimeChanged = AndroidServiceStateHost::notifyRunTimeChanged,
         )
     }
 
     val runState = machine.runState
 
+    internal val currentSharedState: SharedState get() = machine.currentSharedState
+
     val isRunRequested: Boolean
         get() = if (rootTun.selected) rootTun.runningRequested else machine.isRunRequested
 
-    fun attachFlutterEngine(engine: FlutterEngine) = AndroidServiceStateHost.attachFlutterEngine(engine)
+    fun attachFlutterEngine(engine: FlutterEngine) {
+        AndroidServiceStateHost.attachFlutterEngine(engine)
+        rootTun.attachCore()
+    }
 
     fun detachFlutterEngine(engine: FlutterEngine) = AndroidServiceStateHost.detachFlutterEngine(engine)
+
+    suspend fun awaitCoreAttachment() = rootTun.awaitCoreAttachment()
 
     suspend fun handleToggleAction() {
         if (rootTun.selected) {
@@ -81,7 +83,11 @@ object ServiceState {
             machine.awaitRunTime()
         }
 
-    fun requestStart(): Deferred<Boolean> = if (rootTun.selected) CompletableDeferred(false) else machine.requestStart()
+    fun requestStart(): Deferred<Boolean> {
+        if (!rootTun.selected) return machine.requestStart()
+        val result = rootTun.command("start", mapOf("requestId" to UUID.randomUUID().toString()))
+        return CompletableDeferred(result["ok"] == true)
+    }
 
     fun requestStop(): Deferred<Boolean> {
         if (!rootTun.selected) return machine.requestStop()

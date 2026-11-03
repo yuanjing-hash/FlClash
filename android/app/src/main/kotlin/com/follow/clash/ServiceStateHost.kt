@@ -139,6 +139,10 @@ internal object AndroidServiceStateHost : ServiceStateHost {
         flutterEngine?.plugin<ServicePlugin>()?.notifyStopped()
     }
 
+    fun notifyRunTimeChanged() {
+        flutterEngine?.plugin<ServicePlugin>()?.notifyRunTimeChanged()
+    }
+
     override suspend fun quickSetup(initParams: String, setupParams: String): Result<String> =
         ServiceController.quickSetup(initParams, setupParams)
 

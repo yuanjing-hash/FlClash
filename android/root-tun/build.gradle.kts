@@ -75,7 +75,8 @@ androidComponents {
         ).also { require(it.isNotEmpty()) { "Root TUN requires a 64-bit Flutter target" } }
     val buildRootTunCore =
         tasks.register<BuildRootTunCore>("buildRootTunCore") {
-            sourceDirectory.set(rootProject.layout.projectDirectory.dir("../core/Clash.Meta"))
+            dependsOn(rootProject.tasks.named("prepareCore"))
+            sourceDirectory.set(rootProject.layout.projectDirectory.dir("../core"))
             script.set(rootProject.layout.projectDirectory.file("root-tun/build-core.sh"))
             abis.set(rootAbis)
             goVersion.set(providers.exec { commandLine("go", "env", "GOVERSION") }.standardOutput.asText)

@@ -1311,7 +1311,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "Root authorization timed out (30 seconds). Root TUN did not start.",
     ),
     "rootTunErrorStartTimeout": MessageLookupByLibrary.simpleMessage(
-      "Root TUN startup timed out (10 seconds). Changes were rolled back.",
+      "Root TUN startup timed out. Changes were rolled back.",
     ),
     "rootTunErrorTunCreateFailed": MessageLookupByLibrary.simpleMessage(
       "Could not create the TUN interface. Root TUN did not start; the network is unaffected.",

@@ -999,7 +999,7 @@
   "rootTunErrorNetworkRulesApplyFailed": "网络规则写入失败，已回滚，网络未受影响。",
   "rootTunErrorDnsTakeoverFailed": "DNS 接管失败，为避免泄露已停止 Root TUN。",
   "rootTunErrorCoreStartFailed": "代理核心启动失败，请检查配置。",
-  "rootTunErrorStartTimeout": "Root TUN 启动超时（10 秒），已回滚。",
+  "rootTunErrorStartTimeout": "Root TUN 启动超时，已回滚。",
   "rootTunErrorCoreCrashedRecovering": "代理核心异常退出，正在自动恢复…",
   "rootTunErrorCoreRecovered": "代理已自动恢复。",
   "rootTunErrorCoreRecoveryFailed": "自动恢复失败，已切换为直连，网络可正常使用但未经代理。",

@@ -40,7 +40,7 @@ final class CommonActionProvider extends $NotifierProvider<CommonAction, void> {
   }
 }
 
-String _$commonActionHash() => r'54ce5b04654db2574cc10d9e364eacb8c7137a36';
+String _$commonActionHash() => r'89b5043fedabedcdb2fc20ed368f188107874896';
 
 abstract class _$CommonAction extends $Notifier<void> {
   void build();
@@ -63,7 +63,8 @@ abstract class _$CommonAction extends $Notifier<void> {
 @ProviderFor(SetupAction)
 final setupActionProvider = SetupActionProvider._();
 
-final class SetupActionProvider extends $NotifierProvider<SetupAction, void> {
+final class SetupActionProvider
+    extends $NotifierProvider<SetupAction, RunProgress> {
   SetupActionProvider._()
     : super(
         from: null,
@@ -83,27 +84,27 @@ final class SetupActionProvider extends $NotifierProvider<SetupAction, void> {
   SetupAction create() => SetupAction();
 
   /// {@macro riverpod.override_with_value}
-  Override overrideWithValue(void value) {
+  Override overrideWithValue(RunProgress value) {
     return $ProviderOverride(
       origin: this,
-      providerOverride: $SyncValueProvider<void>(value),
+      providerOverride: $SyncValueProvider<RunProgress>(value),
     );
   }
 }
 
-String _$setupActionHash() => r'25138994408b232d6a5501660da7a75d0515a9b9';
+String _$setupActionHash() => r'c5e4a475b7b3d62bc6a85e28f6c0df8aa6d6384d';
 
-abstract class _$SetupAction extends $Notifier<void> {
-  void build();
+abstract class _$SetupAction extends $Notifier<RunProgress> {
+  RunProgress build();
   @$mustCallSuper
   @override
   WhenComplete runBuild() {
-    final ref = this.ref as $Ref<void, void>;
+    final ref = this.ref as $Ref<RunProgress, RunProgress>;
     final element =
         ref.element
             as $ClassProviderElement<
-              AnyNotifier<void, void>,
-              void,
+              AnyNotifier<RunProgress, RunProgress>,
+              RunProgress,
               Object?,
               Object?
             >;
@@ -244,7 +245,7 @@ final class SystemActionProvider extends $NotifierProvider<SystemAction, void> {
   }
 }
 
-String _$systemActionHash() => r'0415cd015950dbd6b21a3f14c0b1ced5c2333812';
+String _$systemActionHash() => r'8289c73c9e50a4303646e6b5324dc65093ef1447';
 
 abstract class _$SystemAction extends $Notifier<void> {
   void build();
@@ -450,7 +451,7 @@ final class ProfilesActionProvider
   }
 }
 
-String _$profilesActionHash() => r'5489060d78e082015815ed1bcb8bfda159111acb';
+String _$profilesActionHash() => r'3c1e8d82dca0bea932665f2c18a5688f4db2fecc';
 
 abstract class _$ProfilesAction extends $Notifier<void> {
   void build();

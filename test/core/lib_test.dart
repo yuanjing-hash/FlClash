@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:fl_clash/core/desktop/model.dart';
 import 'package:fl_clash/core/lib.dart';
 import 'package:fl_clash/core/method.dart';
@@ -23,6 +25,7 @@ class _FakeService implements Service {
   bool startResult = true;
   bool stopResult = true;
   CoreMethodResponse? Function(CoreMethodCall call)? onInvokeMethod;
+  Completer<CoreMethodResponse?>? pendingConfig;
 
   final invokedCalls = <CoreMethodCall>[];
 
@@ -60,6 +63,9 @@ class _FakeService implements Service {
   Future<CoreMethodResponse?> invokeMethod(CoreMethodCall call) async {
     calls.add('invokeMethod:${call.method.name}');
     invokedCalls.add(call);
+    if (call.method == CoreMethod.setupConfig && pendingConfig != null) {
+      return pendingConfig!.future;
+    }
     return onInvokeMethod?.call(call);
   }
 
@@ -218,6 +224,47 @@ void main() {
   });
 
   group('listeners', () {
+    test(
+      'waits for configuration staging before requesting root startup',
+      () async {
+        await lib.start();
+        service.calls.clear();
+        service.pendingConfig = Completer<CoreMethodResponse?>();
+
+        final config = lib.setupConfig(
+          const SetupParams(selectedMap: {}, testUrl: ''),
+        );
+        final starting = lib.startListener();
+        await Future<void>.delayed(Duration.zero);
+        expect(service.calls, ['invokeMethod:setupConfig']);
+
+        service.pendingConfig!.complete(
+          const CoreMethodResponse(id: '1', result: ''),
+        );
+        expect(await config, isEmpty);
+        expect(await starting, isTrue);
+        expect(service.calls.last, 'start');
+      },
+    );
+
+    test('does not start a root runtime with rejected configuration', () async {
+      await lib.start();
+      service.calls.clear();
+      service.pendingConfig = Completer<CoreMethodResponse?>();
+
+      final config = lib.setupConfig(
+        const SetupParams(selectedMap: {}, testUrl: ''),
+      );
+      final starting = lib.startListener();
+      service.pendingConfig!.complete(
+        const CoreMethodResponse(id: '1', result: 'Invalid configuration'),
+      );
+
+      expect(await config, 'Invalid configuration');
+      expect(await starting, isFalse);
+      expect(service.calls, ['invokeMethod:setupConfig']);
+    });
+
     test('a listener start is answered by the service', () async {
       await lib.start();
       service.onInvokeMethod = (_) =>
@@ -244,15 +291,20 @@ void main() {
       expect(await lib.stopListener(), isFalse);
     });
 
-    test('stopListener stops the service before the core listener', () async {
-      await lib.start();
-      service.onInvokeMethod = (_) =>
-          const CoreMethodResponse(id: '1', result: true);
-      service.calls.clear();
+    test(
+      'listener commands leave core listener ownership to Android',
+      () async {
+        await lib.start();
+        service.onInvokeMethod = (_) =>
+            const CoreMethodResponse(id: '1', result: true);
+        service.calls.clear();
 
-      expect(await lib.stopListener(), isTrue);
-      expect(service.calls, ['stop', 'invokeMethod:stopListener']);
-    });
+        expect(await lib.startListener(), isTrue);
+        expect(await lib.stopListener(), isTrue);
+        expect(service.calls, ['start', 'stop']);
+        expect(service.invokedCalls, isEmpty);
+      },
+    );
   });
 
   group('invokeMethod', () {

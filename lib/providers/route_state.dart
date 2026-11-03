@@ -9,6 +9,7 @@ import 'package:riverpod_annotation/riverpod_annotation.dart';
 
 import 'app.dart';
 import 'core.dart';
+import 'connection_status.dart';
 import 'state.dart';
 
 part 'generated/route_state.g.dart';
@@ -165,6 +166,7 @@ class RouteTracker extends _$RouteTracker {
   int _generation = 0;
   bool _syncing = false;
   bool _resubscribe = false;
+  bool _proxiedSyncScheduled = false;
   Timer? _retry;
   int _failures = 0;
 
@@ -173,6 +175,7 @@ class RouteTracker extends _$RouteTracker {
     ref.onDispose(_cancelRetry);
     ref.listen(isStartProvider, (_, _) => _scheduleSyncProxied());
     ref.listen(suspendProvider, (_, _) => _scheduleSyncProxied());
+    ref.listen(connectionPhaseProvider(), (_, _) => _scheduleSyncProxied());
     ref.listen(initProvider, (_, _) => _subscribe());
     ref.listen(appVisibleProvider, (_, visible) {
       if (visible) {
@@ -191,12 +194,15 @@ class RouteTracker extends _$RouteTracker {
     return RouteState(proxied: _proxied);
   }
 
-  bool get _proxied => ref.read(isStartProvider) && !ref.read(suspendProvider);
+  bool get _proxied =>
+      ref.read(connectionPhaseProvider()) == ConnectionPhase.running &&
+      !ref.read(suspendProvider);
 
   bool get _ready =>
       _watchers > 0 &&
       ref.read(appVisibleProvider) &&
       ref.read(initProvider) &&
+      ref.read(connectionPhaseProvider()).canProbe &&
       ref.read(coreStatusProvider) == CoreStatus.connected;
 
   void attach() {
@@ -219,6 +225,7 @@ class RouteTracker extends _$RouteTracker {
   void resync() => _subscribe();
 
   void applySnapshot(RouteSnapshot snapshot) {
+    if (!ref.read(connectionPhaseProvider()).canProbe) return;
     state = state.copyWith(
       coreEpoch: snapshot.coreEpoch,
       picksVersion: snapshot.picksVersion,
@@ -240,7 +247,10 @@ class RouteTracker extends _$RouteTracker {
   /// Deferred because both are computed: unwatched, they go stale, and the
   /// widget that next reads one recomputes it from initState or build.
   void _scheduleSyncProxied() {
+    if (_proxiedSyncScheduled) return;
+    _proxiedSyncScheduled = true;
     scheduleMicrotask(() {
+      _proxiedSyncScheduled = false;
       if (ref.mounted) {
         _syncProxied();
       }
@@ -248,10 +258,15 @@ class RouteTracker extends _$RouteTracker {
   }
 
   void _syncProxied() {
+    if (!ref.read(connectionPhaseProvider()).canProbe) {
+      _dropSync();
+      return;
+    }
     final proxied = _proxied;
     if (proxied != state.proxied) {
       state = state.copyWith(proxied: proxied);
     }
+    if (!state.live) unawaited(_subscribe());
   }
 
   Future<void> _subscribe() async {

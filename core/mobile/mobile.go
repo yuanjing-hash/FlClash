@@ -80,6 +80,14 @@ func StopListener() {
 	core.StopListener()
 }
 
+func PauseForRoot() bool {
+	return core.PauseForRoot()
+}
+
+func ResumeAfterRoot() {
+	core.ResumeAfterRoot()
+}
+
 func ForceGC() {
 	core.ForceGC()
 }

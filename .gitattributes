@@ -1,2 +1,7 @@
 # freezed emits lines of trailing spaces, and generated code is never edited by hand.
 lib/**/generated/** -whitespace
+
+android/app/src/main/assets/root-tun/*.sh text eol=lf
+android/root-tun/**/*.sh text eol=lf
+tool/prepare_core.sh text eol=lf
+core/patches/*.patch text eol=lf -whitespace

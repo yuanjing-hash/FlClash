@@ -1,0 +1,66 @@
+diff --git a/constant/path.go b/constant/path.go
+index 590928d0..69476f3e 100644
+--- a/constant/path.go
++++ b/constant/path.go
+@@ -54,6 +54,7 @@ var Path = func() *path {
+ type path struct {
+ 	homeDir         string
+ 	configFile      string
++	cacheFile       string
+ 	allowUnsafePath bool
+ 	safePaths       []string
+ }
+@@ -68,6 +69,10 @@ func SetConfig(file string) {
+ 	Path.configFile = file
+ }
+ 
++func SetCacheFile(file string) {
++	Path.cacheFile = file
++}
++
+ func (p *path) HomeDir() string {
+ 	return p.homeDir
+ }
+@@ -188,6 +193,9 @@ func (p *path) OldCache() string {
+ }
+ 
+ func (p *path) Cache() string {
++	if p.cacheFile != "" {
++		return p.Resolve(p.cacheFile)
++	}
+ 	return P.Join(p.homeDir, "cache.db")
+ }
+ 
+diff --git a/constant/path_test.go b/constant/path_test.go
+index 82c6b2c5..9356c20b 100644
+--- a/constant/path_test.go
++++ b/constant/path_test.go
+@@ -1,10 +1,27 @@
+ package constant
+ 
+ import (
+-	"github.com/stretchr/testify/assert"
++	"path/filepath"
+ 	"testing"
++
++	"github.com/stretchr/testify/assert"
+ )
+ 
++func TestCacheOverrideKeepsConfigAndResourcePaths(t *testing.T) {
++	previous := Path
++	t.Cleanup(func() { Path = previous })
++	home := t.TempDir()
++	Path = &path{homeDir: home, configFile: filepath.Join(home, "config.yaml")}
++	assert.Equal(t, filepath.Join(home, "cache.db"), filepath.Clean(Path.Cache()))
++	SetCacheFile(filepath.Join(home, "root-state", "core-cache.db"))
++	assert.Equal(t, filepath.Join(home, "root-state", "core-cache.db"), Path.Cache())
++	assert.Equal(t, home, Path.HomeDir())
++	assert.Equal(t, filepath.Join(home, "config.yaml"), Path.Config())
++	assert.Equal(t, filepath.Join(home, "providers", "rules.yaml"), Path.Resolve(filepath.Join("providers", "rules.yaml")))
++	SetCacheFile("")
++	assert.Equal(t, filepath.Join(home, "cache.db"), filepath.Clean(Path.Cache()))
++}
++
+ func TestPath(t *testing.T) {
+ 	assert.False(t, (&path{}).IsSafePath("/usr/share/metacubexd/"))
+ 	assert.True(t, (&path{

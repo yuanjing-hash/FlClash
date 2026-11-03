@@ -43,13 +43,14 @@ class SetupAction extends _$SetupAction {
   bool get _isRunning => _startTime != null && _startTime!.isBeforeNow;
 
   @override
-  void build() {
+  RunProgress build() {
     ref.onDispose(_stopRuntimeTicker);
     ref.listen(appVisibleProvider, (_, _) => _syncRuntimeTicker());
     ref.listen(
       appSettingProvider.select((state) => state.showTrayTitle),
       (_, _) => _syncRuntimeTicker(),
     );
+    return RunProgress.idle;
   }
 
   bool get _isTrafficShown =>
@@ -140,6 +141,28 @@ class SetupAction extends _$SetupAction {
               startTime.millisecondsSinceEpoch;
   }
 
+  void syncRunTime(DateTime? startedAt) {
+    // Root command acceptance can report zero before authorization or readiness.
+    if (startedAt == null && state == RunProgress.starting) {
+      final snapshot = ref.read(rootTunControllerProvider).snapshot;
+      if (snapshot?.mode == RootTunMode.rootTun &&
+          snapshot?.rootTunEnabled == true &&
+          {
+            RootTunState.disabled,
+            RootTunState.awaitingAuth,
+            RootTunState.starting,
+            RootTunState.recovering,
+          }.contains(snapshot?.state)) {
+        return;
+      }
+    }
+    state = RunProgress.idle;
+    if (_startTime == startedAt) return;
+    _startTime = startedAt;
+    _updateRunTime();
+    _syncRuntimeTicker();
+  }
+
   Future<void> _updateStartTime() async {
     _startTime = await service?.getRunTime();
   }
@@ -170,6 +193,7 @@ class SetupAction extends _$SetupAction {
       previousStartTime: _startTime,
     );
     _latestRunRequest = request;
+    state = running ? RunProgress.starting : RunProgress.stopping;
     _setLocalRunning(running);
     if (request.initialize) {
       globalState.needInitStatus = false;
@@ -211,6 +235,12 @@ class SetupAction extends _$SetupAction {
     if (!await _setCoreRunning(request) && _isCurrent(request)) {
       throw _unanswered(CoreMethod.startListener);
     }
+    if (_isCurrent(request) &&
+        (!system.isAndroid ||
+            ref.read(safeModeProvider) ||
+            ref.read(suspendProvider))) {
+      state = RunProgress.idle;
+    }
   }
 
   Future<bool> _stop(_RunRequest request) async {
@@ -224,6 +254,7 @@ class SetupAction extends _$SetupAction {
     if (!_isCurrent(request)) {
       return true;
     }
+    state = RunProgress.idle;
     resetCoreTraffic();
     ref.read(trafficsProvider.notifier).clear();
     ref.read(totalTrafficProvider.notifier).value = const Traffic();
@@ -288,6 +319,7 @@ class SetupAction extends _$SetupAction {
       return;
     }
     _startTime = request.previousStartTime;
+    state = RunProgress.idle;
     _setLocalRunning(!request.running);
   }
 

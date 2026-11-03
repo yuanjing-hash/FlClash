@@ -6,6 +6,7 @@ source_dir=$1
 output=$2
 abi=$3
 ndk=$4
+sh "$source_dir/../tool/prepare_core.sh"
 [ -f "$source_dir/go.mod" ] || {
     echo 'Root TUN requires the pinned core/Clash.Meta submodule (git submodule update --init --recursive).' >&2
     exit 1
@@ -32,5 +33,5 @@ case "$abi" in
     *) echo 'Root TUN supports arm64-v8a and x86_64 only.' >&2; exit 64 ;;
 esac
 go build -tags with_gvisor -trimpath -ldflags '-s -w -extldflags=-Wl,-z,max-page-size=16384 -X github.com/metacubex/mihomo/constant.Version=FlClash-root-native' \
-    -o "$output/libroot_mihomo.so.tmp" .
+    -o "$output/libroot_mihomo.so.tmp" ./cmd/root
 mv "$output/libroot_mihomo.so.tmp" "$output/libroot_mihomo.so"

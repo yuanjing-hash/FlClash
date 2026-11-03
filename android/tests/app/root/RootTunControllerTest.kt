@@ -8,6 +8,30 @@ import org.junit.Test
 
 class RootTunControllerTest {
     @Test
+    fun slowPreparationLeavesASeparateCoreReadinessWindow() {
+        var now = 0L
+        val window = RootTunController.StartupWindow { now }
+        now = 59_000
+        assertTrue(window.isOpen())
+        assertTrue(window.beginReadiness())
+        now = 88_999
+        assertTrue(window.isOpen())
+        now = 89_000
+        assertFalse(window.isOpen())
+    }
+
+    @Test
+    fun expiredPreparationCannotRestartItsDeadline() {
+        var now = 0L
+        val window = RootTunController.StartupWindow { now }
+        now = 60_000
+        assertFalse(window.isOpen())
+        assertFalse(window.beginReadiness())
+        now = 60_001
+        assertFalse(window.isOpen())
+    }
+
+    @Test
     fun magiskStatusPollingUsesOnlyRootReportedFiles() {
         val query = { error("Magisk background polling must not invoke su") }
         assertNull(RootTunController.monitoredStatus("magisk", null, 1_000, query))

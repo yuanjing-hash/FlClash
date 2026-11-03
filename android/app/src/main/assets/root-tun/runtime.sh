@@ -1,19 +1,40 @@
 #!/system/bin/sh
+if [ "${FLCLASH_ROOT_BUSYBOX_PID:-}" != "$$" ]; then
+    for root_busybox in /data/adb/ksu/bin/busybox /data/adb/ap/bin/busybox /data/adb/magisk/busybox; do
+        if [ -x "$root_busybox" ]; then
+            export ASH_STANDALONE=1 FLCLASH_ROOT_BUSYBOX_PID=$$
+            exec "$root_busybox" sh "$0" "$@"
+        fi
+    done
+fi
 set -u
 umask 077
 R=/data/adb/flclash-root
 export TMPDIR=$R/tmp
 export PATH=/system/bin:/system/xbin:/vendor/bin:/data/adb/ksu/bin:/data/adb/ap/bin
+root_ip=ip
+[ ! -x /system/bin/ip ] || root_ip=/system/bin/ip
+
+ip() {
+    command "$root_ip" "$@"
+}
+
 CORE=$R/bin/mihomo
 STATE=$R/state
 RUN=$R/run
 BOOT=$(cat /proc/sys/kernel/random/boot_id)
 
+runtime_error() {
+    printf 'root-runtime: step=%s %s\n' "$1" "$2" >&2
+    return 1
+}
+
 safe_tree() {
-    [ ! -L "$R" ] || return 1
-    [ -d "$R" ] || return 1
-    [ "$(stat -c %u "$R")" = 0 ] || return 1
-    [ -z "$(find "$R" -type l -print)" ] || return 1
+    [ ! -L "$R" ] || { runtime_error safe-tree 'runtime directory is a symlink'; return 1; }
+    [ -d "$R" ] || { runtime_error safe-tree 'runtime directory is missing'; return 1; }
+    [ "$(stat -c %u "$R")" = 0 ] || { runtime_error safe-tree 'runtime directory is not root-owned'; return 1; }
+    tree_links=$(find "$R" -type l -print) || { runtime_error safe-tree 'could not inspect runtime directory'; return 1; }
+    [ -z "$tree_links" ] || { runtime_error safe-tree "symlinks in runtime: $tree_links"; return 1; }
 }
 
 ticks() {
@@ -135,7 +156,8 @@ fresh() {
 }
 
 detach() {
-    nohup setsid /system/bin/sh "$R/scripts/runtime.sh" spawn "$@" </dev/null >/dev/null 2>&1 &
+    rotate_log launch
+    nohup setsid sh "$R/scripts/runtime.sh" spawn "$@" </dev/null >>"$R/logs/launch.log" 2>&1 &
 }
 
 ensure_watchdog() {
@@ -158,21 +180,38 @@ publish() {
 
 vacant() {
     for family in -4 -6; do
-        rules=$(ip "$family" rule show) || return 1
-        [ -z "$(printf '%s\n' "$rules" | awk -F: '$1 >= 8990 && $1 <= 9011')" ] || return 1
+        rules=$(ip "$family" rule show 2>&1) || { runtime_error inspect-rules "$family $rules"; return 1; }
+        reserved_rules=$(printf '%s\n' "$rules" | awk -F: '$1 >= 8990 && $1 <= 9011')
+        [ -z "$reserved_rules" ] || { runtime_error reserved-rules "$family $reserved_rules"; return 1; }
         if ! routes=$(ip "$family" route show table 2022 2>&1); then
             case "$routes" in
                 *'does not exist'*|*'No such file'*) routes='' ;;
-                *) return 1 ;;
+                *) runtime_error inspect-routes "$family $routes"; return 1 ;;
             esac
         fi
-        [ -z "$routes" ] || return 1
+        [ -z "$routes" ] || { runtime_error reserved-table "$family $routes"; return 1; }
     done
-    links=$(ip link show) || return 1
-    if printf '%s\n' "$links" | grep -E '^[0-9]+: flcrtun0[:@]' >/dev/null; then return 1; fi
+    links=$(ip link show 2>&1) || { runtime_error inspect-links "$links"; return 1; }
+    if printf '%s\n' "$links" | grep -E '^[0-9]+: flcrtun0[:@]' >/dev/null; then
+        runtime_error reserved-link 'flcrtun0 still exists'
+        return 1
+    fi
     for tool in iptables ip6tables; do
-        chains=$("$tool" -w 1 -S) || return 1
-        if printf '%s\n' "$chains" | grep -E '^(-N FCR_OUTPUT$|-A FCR_OUTPUT )' >/dev/null; then return 1; fi
+        chains=$("$tool" -w 1 -S 2>&1) || { runtime_error inspect-firewall "$tool $chains"; return 1; }
+        if printf '%s\n' "$chains" | grep -E '^(-N FCR_OUTPUT$|-A FCR_OUTPUT )' >/dev/null; then
+            runtime_error reserved-chain "$tool FCR_OUTPUT still exists"
+            return 1
+        fi
+        if ! nat_chains=$("$tool" -w 1 -t nat -S 2>&1); then
+            case "$tool:$nat_chains" in
+                ip6tables:*"can't initialize ip6tables table"*"Table does not exist"*) nat_chains='' ;;
+                *) runtime_error inspect-firewall "$tool nat $nat_chains"; return 1 ;;
+            esac
+        fi
+        if printf '%s\n' "$nat_chains" | grep -E '^(-N mihomo-output$|-A mihomo-output )' >/dev/null; then
+            runtime_error reserved-chain "$tool mihomo-output is occupied"
+            return 1
+        fi
     done
     return 0
 }
@@ -207,6 +246,7 @@ compare_restoration() {
         printf '%s\n' 'CLEANUP_FAILED: could not collect restored network' >> "$diff_file.tmp"
         mv "$diff_file.tmp" "$diff_file"
         printf '%s WARN CLEANUP_FAILED: network snapshot unavailable; see restore-diff.txt\n' "$(date +%s)" >> "$R/logs/transitions.log"
+        runtime_error compare-restoration 'network snapshot unavailable; see restore-diff.txt'
         return 1
     fi
     comparison_ok=1
@@ -239,7 +279,7 @@ compare_restoration() {
     if [ -s "$diff_file" ]; then
         printf '%s WARN CLEANUP_FAILED: network differs from baseline; see restore-diff.txt\n' "$(date +%s)" >> "$R/logs/transitions.log"
     fi
-    [ "$comparison_ok" -eq 1 ]
+    [ "$comparison_ok" -eq 1 ] || { runtime_error compare-restoration 'baseline is incomplete; see restore-diff.txt'; return 1; }
 }
 
 install_rules() {
@@ -250,27 +290,96 @@ install_rules() {
     printf '%s\n' "$BOOT" > "$STATE/owned.boot"
     printf '%s\n' 'rules:8990-9011 table:2022 link:flcrtun0 chains:FCR_OUTPUT' > "$STATE/owned"
     sync
+    ip -4 rule add pref 9011 table main suppress_prefixlength 0 || return 1
+    ip -6 rule add pref 9011 table main suppress_prefixlength 0 || return 1
     ip -4 rule add pref 8990 fwmark 0x40000000/0x40000000 goto 9011 || return 1
-    ip -4 rule add pref 8991 iif lo lookup 2022 || return 1
-    iptables -w 1 -N FCR_OUTPUT || return 1
-    iptables -w 1 -A FCR_OUTPUT -o lo -j RETURN || return 1
-    iptables -w 1 -A FCR_OUTPUT -m mark --mark 0x40000000/0x40000000 -j RETURN || return 1
-    for protocol in udp tcp; do
-        iptables -w 1 -A FCR_OUTPUT ! -o flcrtun0 -p "$protocol" --dport 53 -j REJECT || return 1
+    ip -6 rule add pref 8990 fwmark 0x40000000/0x40000000 goto 9011 || return 1
+    configure_system_proxy || return 1
+    [ "$(cat "$R/config/tun.enabled" 2>/dev/null)" != 0 ] || return 0
+    for family in -4 -6; do
+        if [ "$(cat "$R/config/allow-bypass" 2>/dev/null)" = 1 ]; then
+            # System-permission marks include netd DNS; they are not an app bypass.
+            ip "$family" rule add pref 8990 fwmark 0x20000/0xa0000 goto 9011 || return 1
+        fi
     done
-    iptables -w 1 -A FCR_OUTPUT ! -o flcrtun0 -j REJECT || return 1
+    emit_filter 4 | iptables-restore -w 2 --noflush || return 1
     iptables -w 1 -I OUTPUT 1 -j FCR_OUTPUT || return 1
-    ip6tables -w 1 -N FCR_OUTPUT || return 1
-    ip6tables -w 1 -A FCR_OUTPUT -o lo -j RETURN || return 1
-    for icmp_type in 133 134 135 136; do
-        ip6tables -w 1 -A FCR_OUTPUT -p ipv6-icmp --icmpv6-type "$icmp_type" -j RETURN || return 1
-    done
-    ip6tables -w 1 -A FCR_OUTPUT -j REJECT || return 1
+    emit_filter 6 | ip6tables-restore -w 2 --noflush || return 1
     ip6tables -w 1 -I OUTPUT 1 -j FCR_OUTPUT || return 1
     update_private_dns
 }
 
+configure_routes() {
+    [ "$(cat "$R/config/tun.enabled" 2>/dev/null)" != 0 ] || return 0
+    if [ "$(cat /proc/sys/net/ipv4/conf/all/rp_filter 2>/dev/null)" = 1 ] ||
+        [ "$(cat /proc/sys/net/ipv4/conf/flcrtun0/rp_filter 2>/dev/null)" = 1 ]; then
+        echo 2 > /proc/sys/net/ipv4/conf/flcrtun0/rp_filter || return 1
+    fi
+    ip -4 route show table 2022 | grep -q flcrtun0
+}
+
+filter_rule() {
+    shift 4
+    printf '%s\n' "-A FCR_OUTPUT $*"
+}
+
+emit_filter() {
+    filter_family=$1
+    printf '*filter\n:FCR_OUTPUT - [0:0]\n'
+    printf '%s\n' '-A FCR_OUTPUT -o lo -j RETURN' '-A FCR_OUTPUT -m mark --mark 0x40000000/0x40000000 -j RETURN'
+    if [ "$filter_family" = 6 ]; then
+        for icmp_type in 133 134 135 136; do
+            printf '%s\n' "-A FCR_OUTPUT -p ipv6-icmp --icmpv6-type $icmp_type -j RETURN"
+        done
+    fi
+    configure_guard filter_rule "$filter_family" || return 1
+    printf 'COMMIT\n'
+}
+
+configure_guard() {
+    guard_tool=$1
+    guard_family=$2
+    if [ "$(cat "$R/config/allow-bypass" 2>/dev/null)" = 1 ]; then
+        "$guard_tool" -w 1 -A FCR_OUTPUT -m mark --mark 0x20000/0xa0000 -j RETURN || return 1
+    fi
+    if [ -f "$R/config/bypass.uids" ]; then
+        while IFS= read -r uid_range || [ -n "$uid_range" ]; do
+            [ -n "$uid_range" ] || continue
+            case "$uid_range" in *[!0-9-]*) return 1 ;; esac
+            "$guard_tool" -w 1 -A FCR_OUTPUT -m owner --uid-owner "$uid_range" -j RETURN || return 1
+        done < "$R/config/bypass.uids"
+    fi
+    if [ "$guard_family" = 6 ] && [ "$(cat "$R/config/ipv6.enabled" 2>/dev/null)" != 1 ]; then
+        "$guard_tool" -w 1 -A FCR_OUTPUT -j REJECT || return 1
+    else
+        if [ -f "$R/config/routes$guard_family" ]; then
+            while IFS= read -r route; do
+                case "$route" in ''|*[!0-9a-fA-F:./]*) return 1 ;; esac
+                "$guard_tool" -w 1 -A FCR_OUTPUT -d "$route" ! -o flcrtun0 -j REJECT || return 1
+            done < "$R/config/routes$guard_family"
+        else
+            "$guard_tool" -w 1 -A FCR_OUTPUT ! -o flcrtun0 -j REJECT || return 1
+        fi
+    fi
+}
+
+configure_system_proxy() {
+    [ -s "$R/config/system-proxy" ] || return 0
+    root_proxy apply
+}
+
+restore_system_proxy() {
+    [ -f "$STATE/proxy.json" ] || return 0
+    root_proxy restore
+}
+
+root_proxy() {
+    CLASSPATH="$R/bin/proxy-helper.jar" timeout -s KILL 4 /system/bin/app_process /system/bin com.follow.clash.root.RootProxyMain "$1"
+}
+
 update_private_dns() {
+    [ "$(cat "$R/config/tun.enabled" 2>/dev/null)" != 0 ] || return 0
+    [ "$(cat "$R/config/dns-hijacking" 2>/dev/null)" != 0 ] || return 0
     private_dns=$(settings get global private_dns_mode 2>/dev/null)
     if [ "$private_dns" = null ] || [ -z "$private_dns" ]; then
         private_dns=$(settings get global private_dns_default_mode 2>/dev/null)
@@ -291,18 +400,25 @@ update_private_dns() {
 
 stop_core() {
     if alive "$RUN/core.pid"; then
-        kill -TERM "$recorded_pid" || return 1
+        if ! kill -TERM "$recorded_pid"; then alive "$RUN/core.pid" && return 1; fi
         for _wait_count in 1 2 3 4 5 6 7 8 9 10; do
             alive "$RUN/core.pid" || break
             sleep 0.1
         done
-        if alive "$RUN/core.pid"; then kill -KILL "$recorded_pid" || return 1; fi
+        if alive "$RUN/core.pid"; then
+            if ! kill -KILL "$recorded_pid"; then alive "$RUN/core.pid" && return 1; fi
+            for _wait_count in 1 2 3 4 5 6 7 8 9 10; do
+                alive "$RUN/core.pid" || break
+                sleep 0.1
+            done
+            alive "$RUN/core.pid" && return 1
+        fi
     fi
     rm -f "$RUN/core.pid"
 }
 
 cleanup() {
-    owns || return 1
+    owns || { runtime_error cleanup-owner 'runtime ownership changed'; return 1; }
     if [ -f "$STATE/owned" ] && [ "$(cat "$STATE/owned.boot" 2>/dev/null)" != "$BOOT" ]; then
         if [ ! -f "$STATE/owned.boot" ] && alive "$RUN/core.pid"; then
             printf '%s\n' "$BOOT" > "$STATE/owned.boot"
@@ -311,7 +427,7 @@ cleanup() {
             rm -f "$STATE/owned" "$STATE/owned.boot"
         fi
     fi
-    stop_core || return 1
+    stop_core || { runtime_error stop-core 'could not terminate the recorded core'; return 1; }
     if [ ! -f "$STATE/owned" ]; then
         vacant || return 1
         if [ -f "$STATE/baseline.iptables" ]; then compare_restoration
@@ -319,7 +435,21 @@ cleanup() {
         return $?
     fi
     cleanup_ok=1
+    restore_system_proxy || cleanup_ok=0
     for tool in iptables ip6tables; do
+        redirect=$("$tool" -w 1 -t nat -S mihomo-output 2>/dev/null) || redirect=''
+        if [ -n "$redirect" ]; then
+            if printf '%s\n' "$redirect" | grep -q -- '-o flcrtun0 '; then
+                while "$tool" -w 1 -t nat -C OUTPUT -j mihomo-output 2>/dev/null; do
+                    "$tool" -w 1 -t nat -D OUTPUT -j mihomo-output || { cleanup_ok=0; break; }
+                done
+                "$tool" -w 1 -t nat -F mihomo-output || cleanup_ok=0
+                "$tool" -w 1 -t nat -X mihomo-output || cleanup_ok=0
+            else
+                runtime_error cleanup-redirect 'mihomo-output is not owned by flcrtun0'
+                cleanup_ok=0
+            fi
+        fi
         while "$tool" -w 1 -C OUTPUT -j FCR_OUTPUT 2>/dev/null; do
             "$tool" -w 1 -D OUTPUT -j FCR_OUTPUT || { cleanup_ok=0; break; }
         done
@@ -338,7 +468,7 @@ cleanup() {
     done
     if ip link show flcrtun0 >/dev/null 2>&1; then ip link delete flcrtun0 || cleanup_ok=0; fi
     vacant || cleanup_ok=0
-    [ "$cleanup_ok" -eq 1 ] || return 1
+    [ "$cleanup_ok" -eq 1 ] || { runtime_error remove-network 'owned network resources remain'; return 1; }
     compare_restoration || return 1
     rm -f "$STATE/owned" "$STATE/owned.boot"
 }
@@ -348,7 +478,8 @@ launch_core() {
     if [ -f "$R/logs/core.log" ] && [ "$(stat -c %s "$R/logs/core.log")" -gt 1048576 ]; then
         mv "$R/logs/core.log" "$R/logs/core.log.1"
     fi
-    "$CORE" -d "$R/config" -f "$R/config/config.yaml" >> "$R/logs/core.log" 2>&1 &
+    rm -f "$RUN/core-ready"
+    "$CORE" --root-config "$R/config/root-core.json" >> "$R/logs/core.log" 2>&1 &
     core_pid=$!
     core_ticks=$(ticks "$core_pid")
     [ -n "$core_ticks" ] || return 1
@@ -357,18 +488,19 @@ launch_core() {
 
 core_healthy() {
     alive "$RUN/core.pid" || return 1
+    [ "$(cat "$RUN/core-ready" 2>/dev/null)" = "$recorded_pid" ] || return 1
+    [ "$(cat "$R/config/tun.enabled" 2>/dev/null)" != 0 ] || return 0
     ip link show flcrtun0 2>/dev/null | grep -q UP || return 1
-    port=$(cat "$R/config/controller.port")
-    timeout -s KILL 1 nc -w 1 127.0.0.1 "$port" < "$R/config/health.http" 2>/dev/null | head -n 1 | grep -q ' 200 ' || return 1
 }
 
 network_intact() {
+    [ "$(cat "$R/config/tun.enabled" 2>/dev/null)" != 0 ] || return 0
     ip -4 route show table 2022 | grep -q flcrtun0 &&
         iptables -w 1 -C OUTPUT -j FCR_OUTPUT && ip6tables -w 1 -C OUTPUT -j FCR_OUTPUT
 }
 
 supervise() {
-    claim_owner || return 1
+    claim_owner || { runtime_error claim-owner 'runtime owner is still active'; return 1; }
     if [ -f "$RUN/stop" ]; then unlock owner; return 0; fi
     if [ "${1:-}" = adopt ]; then publish recovering CORE_CRASHED_RECOVERING; else publish starting; fi
     printf '%s\n' "$IDENTITY" > "$RUN/supervisor.pid"
@@ -398,14 +530,6 @@ supervise() {
     fi
     if [ "${1:-}" = adopt ] && [ "$adopt_ready" -eq 1 ]; then
         [ -f "$STATE/owned.boot" ] || printf '%s\n' "$BOOT" > "$STATE/owned.boot"
-        if ! iptables -w 1 -C FCR_OUTPUT ! -o flcrtun0 -j REJECT; then
-            if ! iptables -w 1 -A FCR_OUTPUT ! -o flcrtun0 -j REJECT; then
-                publish stopping CORE_RECOVERY_FAILED
-                if cleanup; then publish failed CORE_RECOVERY_FAILED; else publish stopping CLEANUP_FAILED; fi
-                unlock owner
-                return 1
-            fi
-        fi
         publish running CORE_RECOVERED
     elif [ "${1:-}" = adopt ]; then
         publish stopping CORE_RECOVERY_FAILED
@@ -414,7 +538,7 @@ supervise() {
         unlock owner
         return 1
     fi
-    if [ "${1:-}" != adopt ] && [ ! -c /dev/net/tun ]; then
+    if [ "${1:-}" != adopt ] && [ "$(cat "$R/config/tun.enabled" 2>/dev/null)" != 0 ] && [ ! -c /dev/tun ] && [ ! -c /dev/net/tun ]; then
         publish failed TUN_DEVICE_UNSUPPORTED
     elif [ "${1:-}" != adopt ] && ! install_rules; then
         publish stopping NETWORK_RULES_APPLY_FAILED
@@ -422,7 +546,7 @@ supervise() {
     elif [ "${1:-}" != adopt ] && ! launch_core; then
         if cleanup; then publish failed CORE_START_FAILED; else publish stopping CLEANUP_FAILED; fi
     else
-        deadline=$(($(boot_seconds) + 9))
+        deadline=$(($(boot_seconds) + 30))
         crash_times=''
         if [ -f "$RUN/crash-times" ]; then
             read -r crash_boot crash_times < "$RUN/crash-times"
@@ -466,6 +590,10 @@ supervise() {
             rm -f "$RUN/healthy"
             if core_healthy; then touch "$RUN/healthy"; fi
             if [ -f "$RUN/healthy" ]; then
+                if ! network_intact && ! configure_routes; then
+                    final_code=NETWORK_RULES_APPLY_FAILED
+                    break
+                fi
                 current=$(cat "$STATE/status")
                 case "$current" in
                     recovering*)
@@ -687,7 +815,7 @@ bootstrap() {
     trap 'unlock boot' EXIT
     trap 'exit 0' TERM INT HUP
     stage_started=$(boot_ms)
-    /system/bin/sh "$R/scripts/runtime.sh" context-tools > "$R/logs/service-context.txt" 2>&1 &
+    sh "$R/scripts/runtime.sh" context-tools > "$R/logs/service-context.txt" 2>&1 &
     boot_deadline=$(($(boot_seconds) + 120))
     while [ "$(getprop sys.boot_completed)" != 1 ]; do
         if [ "$(boot_seconds)" -ge "$boot_deadline" ]; then boot_failure AUTOSTART_FAILED; return 1; fi
@@ -724,7 +852,7 @@ bootstrap() {
             network_attempt=$((network_attempt + 1))
             next_network_check=$((now + 8))
             runtime_log boot "network attempt=$network_attempt/7 uptime=$now"
-            if [ "$package" = present ] && timeout -s KILL 1 ip -4 route show table all |
+            if [ "$package" = present ] && timeout -s KILL 1 "$root_ip" -4 route show table all |
                 grep -E '^default .* (via|dev) |^default (via|dev) ' | grep -v flcrtun0 >/dev/null; then break; fi
             if [ "$network_attempt" -ge 7 ]; then boot_failure AUTOSTART_FAILED; return 1; fi
         fi
@@ -740,10 +868,13 @@ bootstrap() {
     esac
     if [ ! -s "$R/config/config.yaml" ] || [ ! -x "$CORE" ]; then boot_failure AUTOSTART_FAILED; return 1; fi
     if [ "$(boot_seconds)" -gt "$dependency_deadline" ]; then boot_failure AUTOSTART_FAILED; return 1; fi
-    start_deadline=$(($(boot_seconds) + 10))
+    CLASSPATH="$R/bin/proxy-helper.jar" timeout -s KILL 15 /system/bin/app_process /system/bin com.follow.clash.root.RootProxyMain prepare >>"$R/logs/boot.log" 2>&1 || {
+        boot_failure AUTOSTART_FAILED; return 1;
+    }
+    start_deadline=$(($(boot_seconds) + 40))
     printf '%s\n' "$BOOT" > "$RUN/boot-id.tmp" && mv "$RUN/boot-id.tmp" "$RUN/boot-id"
     runtime_log boot 'autostart submitted'
-    /system/bin/sh "$R/scripts/runtime.sh" start || { boot_failure AUTOSTART_FAILED; return 1; }
+    sh "$R/scripts/runtime.sh" start || { boot_failure AUTOSTART_FAILED; return 1; }
     saw_start=0
     while [ "$(boot_seconds)" -lt "$start_deadline" ]; do
         [ "$(cat "$STATE/auth-status" 2>/dev/null)" != revoked ] || return 1
@@ -758,7 +889,7 @@ bootstrap() {
 }
 
 cleanup_bounded() {
-    timeout -s KILL 3 /system/bin/sh "$R/scripts/runtime.sh" cleanup-owned "$IDENTITY" "$generation"
+    timeout -s KILL 3 sh "$R/scripts/runtime.sh" cleanup-owned "$IDENTITY" "$generation"
 }
 
 revoke_runtime() {
@@ -795,7 +926,7 @@ record_authorization() {
         denied)
             denied_count=$((denied_count + 1))
             if [ "$denied_count" -eq 1 ]; then
-                /system/bin/sh "$R/scripts/runtime.sh" retain-auth-evidence </dev/null >/dev/null 2>&1 &
+                sh "$R/scripts/runtime.sh" retain-auth-evidence </dev/null >/dev/null 2>&1 &
             fi
             ;;
         *) denied_count=0 ;;
@@ -809,7 +940,7 @@ start_probe() {
     if alive "$RUN/$1-probe.pid"; then return 0; fi
     probe_id="$$-$(boot_seconds)"
     rm -f "$RUN/$1.result"
-    /system/bin/sh "$R/scripts/runtime.sh" "probe-$1" "$probe_id" </dev/null >/dev/null 2>&1 &
+    sh "$R/scripts/runtime.sh" "probe-$1" "$probe_id" </dev/null >/dev/null 2>&1 &
     probe_pid=$!
     printf '%s %s %s\n' "$probe_pid" "$(ticks "$probe_pid")" "$BOOT" > "$RUN/$1-probe.pid"
     printf '%s\n' "$probe_id" > "$RUN/$1-probe.id"
@@ -941,7 +1072,7 @@ stop_runtime() {
         sleep 0.1
     done
     if alive "$RUN/supervisor.pid"; then kill -KILL "$recorded_pid" || return 1; fi
-    claim_owner || return 1
+    claim_owner || { runtime_error claim-owner 'runtime owner is still active'; return 1; }
     publish stopping
     if ! cleanup; then publish stopping CLEANUP_FAILED; unlock owner; return 1; fi
     publish disabled
@@ -955,8 +1086,15 @@ stop_runtime() {
 }
 
 safe_tree || exit 1
-# shellcheck source=android/app/src/main/assets/root-tun/authorization.sh
-. "$R/scripts/authorization.sh"
+case "${1:-}" in
+    stop|cleanup|cleanup-owned)
+        mkdir -p "$RUN" "$STATE" "$R/logs" "$R/tmp" && chmod 700 "$RUN" "$STATE" "$R/logs" "$R/tmp" || exit 1
+        ;;
+    *)
+        # shellcheck source=android/app/src/main/assets/root-tun/authorization.sh
+        . "$R/scripts/authorization.sh"
+        ;;
+esac
 IDENTITY="$$ $(ticks "$$") $BOOT"
 case "${1:-}" in
     cleanup-owned)
@@ -968,16 +1106,16 @@ case "${1:-}" in
         printf '%s %s\n' "$2" "$(package_status)" > "$RUN/package.result.$$"
         mv "$RUN/package.result.$$" "$RUN/package.result"
         ;;
-    context-tools) timeout -s KILL 4 /system/bin/sh "$R/scripts/runtime.sh" tools-inner ;;
+    context-tools) timeout -s KILL 4 sh "$R/scripts/runtime.sh" tools-inner ;;
     tools-inner) context_tools ;;
     auth-evidence)
-        timeout -s KILL 2 /system/bin/sh "$R/scripts/runtime.sh" auth-evidence-inner
+        timeout -s KILL 2 sh "$R/scripts/runtime.sh" auth-evidence-inner
         ;;
     auth-evidence-inner)
         authorization_evidence
         ;;
     retain-auth-evidence)
-        timeout -s KILL 2 /system/bin/sh "$R/scripts/runtime.sh" auth-evidence-inner > "$R/logs/allowlist-denied.$$.tmp" 2>&1
+        timeout -s KILL 2 sh "$R/scripts/runtime.sh" auth-evidence-inner > "$R/logs/allowlist-denied.$$.tmp" 2>&1
         printf 'collector-exit=%s\n' "$?" >> "$R/logs/allowlist-denied.$$.tmp"
         mv "$R/logs/allowlist-denied.$$.tmp" "$R/logs/allowlist-denied.txt"
         ;;
@@ -988,9 +1126,9 @@ case "${1:-}" in
             notify_app_cleanup "$(cut -d' ' -f2 "$STATE/status")"
             exit 0
         fi
-        timeout -s KILL 1 /system/bin/sh "$R/scripts/runtime.sh" probe-app > "$RUN/app-verdict.$$" &
+        timeout -s KILL 1 sh "$R/scripts/runtime.sh" probe-app > "$RUN/app-verdict.$$" &
         app_probe_pid=$!
-        manager_result=$(timeout -s KILL 1 /system/bin/sh "$R/scripts/runtime.sh" probe-manager) || manager_result=unknown
+        manager_result=$(timeout -s KILL 1 sh "$R/scripts/runtime.sh" probe-manager) || manager_result=unknown
         wait "$app_probe_pid" || true
         app_result=$(cat "$RUN/app-verdict.$$" 2>/dev/null) || app_result=unknown
         rm -f "$RUN/app-verdict.$$"
@@ -1025,12 +1163,12 @@ case "${1:-}" in
         ;;
     spawn)
         shift
-        nohup /system/bin/sh "$R/scripts/runtime.sh" "$@" </dev/null >/dev/null 2>&1 &
+        nohup sh "$R/scripts/runtime.sh" "$@" </dev/null >>"$R/logs/launch.log" 2>&1 &
         ;;
     supervise) supervise "${2:-}" ;;
     watchdog) watchdog ;;
     stop|cleanup)
-        wait_control || exit 1
+        wait_control || { runtime_error control-lock 'another runtime command is active'; exit 1; }
         stop_runtime "$1"
         result=$?
         unlock control
@@ -1046,9 +1184,7 @@ case "${1:-}" in
         always_on=$(settings get secure always_on_vpn_app 2>/dev/null)
         if [ "$always_on" = "$(cat "$R/config/app.package" 2>/dev/null)" ]; then echo always-on:yes; fi
         fresh supervisor || exit 1
-        alive "$RUN/core.pid" || exit 1
-        ip link show flcrtun0 | grep -q 'UP' || exit 1
-        ip -4 route show table 2022 | grep -q flcrtun0 || exit 1
+        core_healthy && network_intact || exit 1
         ;;
     healthy)
         alive "$RUN/core.pid" || exit 1

@@ -38,4 +38,11 @@ void main() {
     expect(banner.message, 'SAFE MODE');
     expect(find.byKey(const Key('child')), findsOneWidget);
   });
+
+  testWidgets('the Android test build has no DEBUG ribbon', (tester) async {
+    globalState.appEnv = 'pre';
+    addTearDown(() => globalState.appEnv = 'stable');
+    await pump(tester, safeMode: false);
+    expect(find.byType(Banner), findsNothing);
+  });
 }

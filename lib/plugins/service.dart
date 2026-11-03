@@ -14,6 +14,8 @@ final _utf8JsonDecoder = utf8.decoder.fuse(json.decoder);
 
 Object? _decodeUtf8Json(Uint8List data) => _utf8JsonDecoder.convert(data);
 
+String _encodeSharedState(SharedState state) => json.encode(state);
+
 Map<String, Object?> _decodeResponseOf((Uint8List, CoreMethod) request) {
   final (data, method) = request;
   final decoded = _decodeUtf8Json(data);
@@ -34,6 +36,8 @@ abstract mixin class ServiceListener {
   void onServiceEvent(CoreEvent event) {}
 
   void onServiceStopped() {}
+
+  void onServiceRunTimeChanged(DateTime? startedAt) {}
 }
 
 class Service {
@@ -46,6 +50,7 @@ class Service {
 
   int _commandRevision = 0;
   bool _startRequested = false;
+  int _syncRevision = 0;
 
   factory Service() {
     _instance ??= Service._internal();
@@ -76,6 +81,18 @@ class Service {
           }
           _startRequested = false;
           _dispatch('stop report', (listener) => listener.onServiceStopped());
+          break;
+        case 'runTime':
+          final report = Map<String, Object?>.from(call.arguments as Map);
+          if (report['revision'] != _commandRevision) break;
+          final milliseconds = report['startedAt'] as int;
+          final startedAt = milliseconds == 0
+              ? null
+              : DateTime.fromMillisecondsSinceEpoch(milliseconds);
+          _dispatch(
+            'run time report',
+            (listener) => listener.onServiceRunTimeChanged(startedAt),
+          );
           break;
         default:
           throw MissingPluginException();
@@ -130,11 +147,10 @@ class Service {
   }
 
   Future<String> syncState(SharedState state) async {
-    return await methodChannel.invokeMethod<String>(
-          'syncState',
-          json.encode(state),
-        ) ??
-        '';
+    final revision = ++_syncRevision;
+    final data = await compute(_encodeSharedState, state);
+    if (revision != _syncRevision) return '';
+    return await methodChannel.invokeMethod<String>('syncState', data) ?? '';
   }
 
   Future<bool> shutdown() async {

@@ -191,6 +191,8 @@ SharedState sharedState(Ref ref) {
   final selectedMap = currentProfile.selectedMap;
   final onlyStatisticsProxy = appSetting.onlyStatisticsProxy;
   final testUrl = appSetting.testUrl;
+  final updates = ref.watch(updateParamsProvider);
+  final safeMode = ref.watch(safeModeProvider);
   return SharedState(
     currentProfileName: currentProfileName,
     onlyStatisticsProxy: onlyStatisticsProxy,
@@ -205,6 +207,12 @@ SharedState sharedState(Ref ref) {
       skipCertVerify: !appSetting.checkCertificate,
     ),
     vpnOptions: ref.watch(vpnOptionsProvider).value,
+    updateParams: updates.copyWith(
+      tun: updates.tun.copyWith(enable: false),
+      externalController: safeMode || updates.secret.isEmpty
+          ? ExternalControllerStatus.close
+          : updates.externalController,
+    ),
   );
 }
 

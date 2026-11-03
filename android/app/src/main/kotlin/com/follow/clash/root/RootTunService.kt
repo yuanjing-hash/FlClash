@@ -12,9 +12,13 @@ import android.os.IBinder
 import com.follow.clash.MainActivity
 import com.follow.clash.R
 import com.follow.clash.ServiceState
+import com.follow.clash.core.Core
+import com.follow.clash.service.modules.NetworkObserveModule
 import java.util.UUID
 
 class RootTunService : Service() {
+    private val network = NetworkObserveModule(this, Core::updateDnsCapture)
+
     override fun onCreate() {
         super.onCreate()
         active = true
@@ -22,6 +26,7 @@ class RootTunService : Service() {
             NotificationChannel(CHANNEL, "Root TUN", NotificationManager.IMPORTANCE_LOW),
         )
         startForeground(ID, notification(this, ServiceState.rootTun.snapshot))
+        network.start()
     }
 
     override fun onStartCommand(
@@ -38,6 +43,7 @@ class RootTunService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        network.stop()
         active = false
         super.onDestroy()
     }
@@ -91,17 +97,21 @@ class RootTunService : Service() {
                     context.packageName,
                 )
             val text = if (label != 0) context.getString(label) else snapshot.state.wire
-            return Notification
-                .Builder(context, CHANNEL)
-                .setSmallIcon(com.follow.clash.service.R.drawable.ic_service)
-                .setContentTitle("FlClash Root TUN")
-                .setContentText(text)
-                .setStyle(Notification.BigTextStyle().bigText(text))
-                .setContentIntent(open)
-                .setOnlyAlertOnce(true)
-                .setOngoing(snapshot.state in setOf(TunState.STARTING, TunState.RUNNING, TunState.RECOVERING, TunState.STOPPING))
-                .addAction(Notification.Action.Builder(null, context.getString(R.string.root_tun_stop), stop).build())
-                .build()
+            val shared = ServiceState.currentSharedState
+            val builder =
+                Notification
+                    .Builder(context, CHANNEL)
+                    .setSmallIcon(com.follow.clash.service.R.drawable.ic_service)
+                    .setContentTitle("${shared.currentProfileName} · Root TUN")
+                    .setContentText(text)
+                    .setStyle(Notification.BigTextStyle().bigText(text))
+                    .setContentIntent(open)
+                    .setOnlyAlertOnce(true)
+                    .setOngoing(snapshot.state in setOf(TunState.STARTING, TunState.RUNNING, TunState.RECOVERING, TunState.STOPPING))
+            if (shared.showStopAction) {
+                builder.addAction(Notification.Action.Builder(null, shared.stopText, stop).build())
+            }
+            return builder.build()
         }
     }
 }

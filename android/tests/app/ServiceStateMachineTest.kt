@@ -170,6 +170,19 @@ private class FakeHost(override val scope: CoroutineScope) : ServiceStateHost {
 class ServiceStateMachineTest {
 
     @Test
+    fun `root launch reads the latest UI state before preferences are saved`() = runTest {
+        val host = FakeHost(backgroundScope)
+        val machine = ServiceStateMachine(host)
+        assertEquals(host.storedSharedState, machine.currentSharedState)
+        val latest = configuredState(stack = "mips").copy(
+            setupParams = SetupParams("https://probe.example", mapOf("group" to "node-b"), true),
+        )
+        machine.syncSharedState(latest)
+        assertEquals(latest, machine.currentSharedState)
+        assertEquals("gvisor", host.storedSharedState.vpnOptions?.stack)
+    }
+
+    @Test
     fun `initParams spells the keys the Go wrapper expects`() {
         val json = ServiceStateMachine.initParams("/files", 34)
 

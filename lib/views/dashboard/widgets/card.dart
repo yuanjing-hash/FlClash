@@ -369,7 +369,7 @@ class DashboardConnectedButton extends StatelessWidget {
   final double outer;
   final double inner;
   final Color background;
-  final VoidCallback onTap;
+  final VoidCallback? onTap;
   final String semanticLabel;
   final Widget Function(Color foreground) builder;
 

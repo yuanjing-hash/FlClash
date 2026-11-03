@@ -252,6 +252,8 @@ class RootTunController extends _$RootTunController {
   }
 
   Future<void> start() => _command(_plugin.start, resetPrompts: true);
+  Future<void> selectMode(RootTunMode mode) =>
+      _command(() => _plugin.selectMode(mode), allowWhenStale: true);
   Future<void> stop(RootTunStopReason reason) =>
       _command(() => _plugin.stop(reason), allowWhenStale: true);
   Future<void> recheckRoot() async {

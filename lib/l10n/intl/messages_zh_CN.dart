@@ -1214,7 +1214,7 @@ class MessageLookup extends MessageLookupByLibrary {
       "等待 root 授权超时（30 秒），Root TUN 未开启。",
     ),
     "rootTunErrorStartTimeout": MessageLookupByLibrary.simpleMessage(
-      "Root TUN 启动超时（10 秒），已回滚。",
+      "Root TUN 启动超时，已回滚。",
     ),
     "rootTunErrorTunCreateFailed": MessageLookupByLibrary.simpleMessage(
       "创建虚拟网卡失败，Root TUN 未开启，网络未受影响。",

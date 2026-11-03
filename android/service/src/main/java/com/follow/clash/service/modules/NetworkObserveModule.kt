@@ -27,14 +27,17 @@ private data class NetworkInfo(
         get() = if (losingUntilMillis > System.currentTimeMillis()) 10 else 0
 }
 
-internal class NetworkObserveModule(private val service: Service) : ServiceModule {
-
+class NetworkObserveModule(
+    private val service: Service,
+    private val onDnsCaptureChanged: ((String) -> Unit)? = null,
+) : ServiceModule {
     private val networkInfos = ConcurrentHashMap<Network, NetworkInfo>()
     private val connectivity by lazy {
         service.getSystemService<ConnectivityManager>()
     }
     private val handler = Handler(networkObserveLooper)
     private var currentDnsList = listOf<String>()
+    private var currentDnsCapture = listOf<String>()
     private var currentNetwork: Network? = null
 
     private val request = NetworkRequest.Builder().apply {
@@ -111,16 +114,25 @@ internal class NetworkObserveModule(private val service: Service) : ServiceModul
 
     @Synchronized
     private fun updateDns() {
-        val preferred = networkInfos.entries.minByOrNull(::networkPriority)
-        val dnsList = preferred
-            ?.value
-            ?.dnsList
-            .orEmpty()
-            .map { address -> address.asSocketAddressText(DNS_PORT) }
-            .distinct()
+        val networks = networkInfos.entries.sortedBy(::networkPriority)
+        val preferred = networks.firstOrNull()
+        val dnsList =
+            preferred
+                ?.value
+                ?.dnsList
+                .orEmpty()
+                .map { address -> address.asSocketAddressText(DNS_PORT) }
+                .distinct()
         if (dnsList != currentDnsList) {
             currentDnsList = dnsList
             Core.updateDNS(dnsList.joinToString(","))
+        }
+        if (onDnsCaptureChanged != null) {
+            val capture = networks.flatMap { it.value.dnsList }.map { it.asSocketAddressText(DNS_PORT) }.distinct()
+            if (capture != currentDnsCapture) {
+                currentDnsCapture = capture
+                onDnsCaptureChanged(capture.joinToString(","))
+            }
         }
         val network = preferred?.key ?: return
         // Sockets protected onto the network we left stay bound to it; closing

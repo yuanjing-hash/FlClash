@@ -19,7 +19,7 @@ manager_authorization() {
                 /^policy=[012][|]until=[0-9]+$/ {
                     valid++; allowed=($2 == 2 && ($4 == 0 || $4 > now))
                 }
-                END { if (valid != 1) print "unknown"; else print allowed ? "granted" : "denied" }'
+                END { if (valid != 1) print "unknown"; else print (allowed ? "granted" : "denied") }'
             ;;
         apatch)
             [ -r /data/adb/ap/package_config ] || { echo unknown; return; }
@@ -30,7 +30,7 @@ manager_authorization() {
                 $1 == "com.follow.clash.root" && $4 == uid { found++; allowed=$3 }
                 END {
                     if (bad || (!header && !rows) || found > 1) print "unknown";
-                    else if (found == 1) print allowed == 1 ? "granted" : "denied";
+                    else if (found == 1) print (allowed == 1 ? "granted" : "denied");
                     else print "denied"
                 }' /data/adb/ap/package_config
             ;;
@@ -60,7 +60,7 @@ kernelsu_authorization() {
                     found++; allowed=b[p+264]
                 }
             }
-            if (found > 1) print "unknown"; else print found == 1 && allowed ? "granted" : "denied"
+            if (found > 1) print "unknown"; else print (found == 1 && allowed ? "granted" : "denied")
         }' "$allow_bytes"
     rm -f "$allow_bytes"
 }

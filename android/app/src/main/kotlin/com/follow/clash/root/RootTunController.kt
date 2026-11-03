@@ -9,8 +9,10 @@ import android.os.SystemClock
 import android.util.AtomicFile
 import android.util.Log
 import com.follow.clash.BuildConfig
+import com.follow.clash.models.SharedState
 import com.google.gson.GsonBuilder
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -26,8 +28,9 @@ import java.util.UUID
 internal class RootTunController(
     private val context: Context,
     private val stopVpn: suspend () -> Boolean,
-    private val selections: () -> Map<String, String>,
+    private val sharedState: () -> SharedState,
     private val requestNotificationPermission: suspend () -> Boolean,
+    private val notifyRunTimeChanged: () -> Unit = {},
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val operations = Mutex()
@@ -43,6 +46,7 @@ internal class RootTunController(
 
     @Volatile private var desiredRunning = false
     private var monitorStarted = false
+    private var coreAttachment: Deferred<Boolean>? = null
 
     @Volatile private var authorizationMonitorStarted = false
     private var authorizationChannel: RootAuthorizationChannel? = null
@@ -78,6 +82,18 @@ internal class RootTunController(
     val runningRequested: Boolean get() = desiredRunning
 
     @Synchronized
+    fun attachCore() {
+        if (!BuildConfig.ROOT_TUN_SAFE_MODE && selected && snapshot.rootTunEnabled && coreAttachment == null) {
+            coreAttachment = scope.async { runtime.attachCore() }
+        }
+    }
+
+    suspend fun awaitCoreAttachment() {
+        attachCore()
+        coreAttachment?.await()
+    }
+
+    @Synchronized
     fun subscribe(
         epoch: String?,
         afterSeq: Long,
@@ -85,7 +101,8 @@ internal class RootTunController(
     ) {
         listener = sink
         val pending = history.filter { (it["seq"] as Long) > afterSeq }
-        if (epoch == snapshot.epoch && afterSeq <= snapshot.seq &&
+        if (epoch == snapshot.epoch &&
+            afterSeq <= snapshot.seq &&
             (afterSeq == snapshot.seq || pending.firstOrNull()?.get("seq") == afterSeq + 1)
         ) {
             pending.forEach { event -> deliver(sink, event) }
@@ -157,8 +174,12 @@ internal class RootTunController(
         val requestId = requireRequestId(arguments["requestId"])
         val reason = if (method == "stop") arguments["reason"] as? String else null
         val enabled = if (method == "setAutostart") arguments["enabled"] as? Boolean else null
+        val mode = if (method == "selectMode") arguments["mode"] as? String else null
+        val previousSelection = snapshot
+        val wasVpnSelected = !selected
+        require(method != "selectMode" || mode in setOf("rootTun", "vpn")) { "Invalid proxy mode" }
         require(method != "setAutostart" || enabled != null) { "enabled must be a boolean" }
-        val fingerprint = "$method:$reason:$enabled"
+        val fingerprint = "$method:$reason:$enabled:$mode"
         requests[requestId]?.let { (previous, result) ->
             require(previous == fingerprint) { "requestId was reused with different parameters" }
             return result
@@ -184,7 +205,9 @@ internal class RootTunController(
         }
         val revision = if (method == "setAutostart") snapshot.intentRevision else snapshot.intentRevision + 1
         val coalesced =
-            method in setOf("start", "requestAuth") && desiredRunning && !snapshot.stale &&
+            method in setOf("start", "requestAuth") &&
+                desiredRunning &&
+                !snapshot.stale &&
                 snapshot.state in setOf(TunState.RUNNING, TunState.STARTING, TunState.AWAITING_AUTH, TunState.RECOVERING)
         if (!coalesced) {
             if (method != "setAutostart") reconciliationPolling.reset()
@@ -208,6 +231,18 @@ internal class RootTunController(
                     detection.cancel()
                     publish(snapshot.copy(intentRevision = revision, state = TunState.STOPPING, authDeadlineAt = null))
                 }
+                "selectMode" -> {
+                    desiredRunning = false
+                    detection.cancel()
+                    publish(
+                        snapshot.copy(
+                            intentRevision = revision,
+                            state = TunState.STOPPING,
+                            authDeadlineAt = null,
+                            mode = if (mode == "rootTun") "rootTun" else snapshot.mode,
+                        ),
+                    )
+                }
                 "recheckRoot" -> publish(snapshot.copy(intentRevision = revision))
                 "setAutostart" -> autostartRequestId = requestId
                 else -> throw IllegalArgumentException("Unknown command")
@@ -219,6 +254,29 @@ internal class RootTunController(
                         when (method) {
                             "start", "requestAuth" -> authorizeAndStart(revision, requestId)
                             "recheckRoot" -> recheck(revision, requestId)
+                            "selectMode" -> {
+                                if (wasVpnSelected && !stopVpn()) {
+                                    report(
+                                        revision,
+                                        snapshot.copy(
+                                            state = TunState.FAILED,
+                                            mode = previousSelection.mode,
+                                            rootTunEnabled = previousSelection.rootTunEnabled,
+                                        ),
+                                        RootCode.MODE_SWITCH_FAILED,
+                                        requestId,
+                                    )
+                                } else if (current(revision)) {
+                                    stop(revision, requestId, if (mode == "vpn") "switchToVpn" else "proxyStop", false)
+                                    if (current(revision) && snapshot.state == TunState.DISABLED) {
+                                        report(
+                                            revision,
+                                            snapshot.copy(mode = checkNotNull(mode), rootTunEnabled = mode == "rootTun"),
+                                            requestId = requestId,
+                                        )
+                                    }
+                                }
+                            }
                             "setAutostart" -> {
                                 if (autostartRequestId != requestId) return@withLock
                                 val changed = runCatching { runtime.setAutostart(checkNotNull(enabled)) }.getOrDefault(false)
@@ -232,17 +290,20 @@ internal class RootTunController(
                             }
                             else -> stop(revision, requestId, reason ?: "disable", method == "cleanupResidue")
                         }
-                    } catch (_: Exception) {
+                    } catch (error: Exception) {
                         if (current(revision)) {
+                            val details = RootDiagnostics.startupFailure("$method/${runtime.startPhase}", error)
+                            Log.e("FlClashRoot", details)
                             if (runtime.stop()) {
                                 report(
                                     revision,
                                     snapshot.copy(state = TunState.FAILED, stale = false),
                                     RootCode.CORE_START_FAILED,
                                     requestId,
+                                    details,
                                 )
                             } else {
-                                report(revision, snapshot.copy(state = TunState.STOPPING), RootCode.CLEANUP_FAILED, requestId)
+                                report(revision, snapshot.copy(state = TunState.STOPPING), RootCode.CLEANUP_FAILED, requestId, details)
                             }
                         }
                     }
@@ -382,7 +443,10 @@ internal class RootTunController(
             publish(checked, checked.lastErrorCode?.let(RootCode::valueOf), requestId)
             if (status != null) recordSession(status.stdout)
         }
-        if (desiredRunning) startForegroundService()
+        if (desiredRunning) {
+            runtime.attachCore()
+            startForegroundService()
+        }
         if (desiredRunning || checked.state == TunState.STOPPING) startMonitor()
     }
 
@@ -429,7 +493,7 @@ internal class RootTunController(
             return
         }
         if (!current(revision)) return
-        val deadline = SystemClock.elapsedRealtime() + 10_000
+        val window = StartupWindow(SystemClock::elapsedRealtime)
         report(
             revision,
             snapshot.copy(state = TunState.STARTING, stale = false, lastErrorCode = null, lastErrorAt = null),
@@ -444,9 +508,10 @@ internal class RootTunController(
         startForegroundService()
         runtimeMayExist = true
         authorizationWasGranted = true
-        runtime.start(selections(), snapshot.rootManager, { authChannel().beginSession() }) {
-            current(revision) && SystemClock.elapsedRealtime() < deadline
-        }
+        val launched =
+            runtime.start(sharedState, snapshot.rootManager, { authChannel().beginSession() }) {
+                current(revision) && window.isOpen()
+            }
         if (runtime.didInstall && current(revision)) {
             synchronized(this) {
                 history.clear()
@@ -458,8 +523,31 @@ internal class RootTunController(
             if (snapshot.authStatus != "revoked") runtime.stop()
             return
         }
+        if (!launched || !window.beginReadiness()) {
+            val cleaned = runtime.stop()
+            report(
+                revision,
+                snapshot.copy(state = if (cleaned) TunState.FAILED else TunState.STOPPING),
+                if (cleaned) RootCode.START_TIMEOUT else RootCode.CLEANUP_FAILED,
+                requestId,
+                "Root runtime preparation exceeded its deadline",
+            )
+            return
+        }
         startMonitor()
-        while (current(revision) && SystemClock.elapsedRealtime() < deadline) {
+        var dnsProbe: RootHealth.DnsProbe? = null
+        while (current(revision) && window.isOpen()) {
+            runtime.startupError?.let { error ->
+                val clean = runtime.stop()
+                report(
+                    revision,
+                    snapshot.copy(state = if (clean) TunState.FAILED else TunState.STOPPING),
+                    if (clean) RootCode.CORE_START_FAILED else RootCode.CLEANUP_FAILED,
+                    requestId,
+                    "phase=start/handoff-ui-config $error",
+                )
+                return
+            }
             val status = monitoredStatus(snapshot.rootManager, authorizationChannel?.runtimeStatus) { runtime.status() }
             if (status == null) {
                 delay(200)
@@ -470,17 +558,10 @@ internal class RootTunController(
                 return
             }
             if (runtime.healthy(status)) {
-                if (!RootHealth.dns()) {
-                    val cleaned = runtime.stop()
-                    if (current(revision)) {
-                        report(
-                            revision,
-                            snapshot.copy(state = if (cleaned) TunState.FAILED else TunState.STOPPING),
-                            if (cleaned) RootCode.DNS_TAKEOVER_FAILED else RootCode.CLEANUP_FAILED,
-                            requestId,
-                        )
-                    }
-                    return
+                dnsProbe = runtime.dnsProbe()
+                if (!dnsProbe.success || !current(revision) || !window.isOpen()) {
+                    delay(200)
+                    continue
                 }
                 report(
                     revision,
@@ -503,8 +584,17 @@ internal class RootTunController(
             report(
                 revision,
                 snapshot.copy(state = if (stopped) TunState.FAILED else TunState.STOPPING),
-                if (stopped) RootCode.START_TIMEOUT else RootCode.CLEANUP_FAILED,
+                if (!stopped) {
+                    RootCode.CLEANUP_FAILED
+                } else if (dnsProbe?.success ==
+                    false
+                ) {
+                    RootCode.DNS_TAKEOVER_FAILED
+                } else {
+                    RootCode.START_TIMEOUT
+                },
                 requestId,
+                dnsProbe?.let { "phase=start/verify-dns target=${RootHealth.PROBE_ADDRESS}:53 ${it.details}" },
             )
         }
     }
@@ -524,7 +614,7 @@ internal class RootTunController(
             return
         }
         val disable = reason in setOf("disable", "switchToVpn")
-        if ((disable || force) && !runtime.setAutostart(false)) {
+        if ((disable || force) && (!noRuntime || snapshot.autostartEnabled) && !runtime.setAutostart(false)) {
             report(revision, snapshot.copy(state = TunState.STOPPING), RootCode.CLEANUP_FAILED, requestId)
             return
         }
@@ -685,7 +775,10 @@ internal class RootTunController(
         val signature = "$state:$code:$warnings:$privateDnsMode:${"autostart:yes" in raw}"
         if (lastRuntimeEvent == signature) return
         lastRuntimeEvent = signature
-        if (state == TunState.FAILED) desiredRunning = false
+        if (state == TunState.FAILED) {
+            desiredRunning = false
+            runtime.detachCore()
+        }
         val next =
             snapshot.copy(
                 state = state,
@@ -738,8 +831,9 @@ internal class RootTunController(
         next: RootSnapshot,
         code: RootCode? = null,
         requestId: String? = null,
+        details: String? = null,
     ) {
-        if (current(revision)) publish(next, code, requestId)
+        if (current(revision)) publish(next, code, requestId, details)
     }
 
     @Synchronized
@@ -750,6 +844,7 @@ internal class RootTunController(
         next: RootSnapshot,
         code: RootCode? = null,
         requestId: String? = null,
+        details: String? = null,
     ) {
         val now = System.currentTimeMillis()
         val occurrence = errorOccurrences.observe(code, now)
@@ -781,7 +876,7 @@ internal class RootTunController(
                 "at" to now,
                 "level" to if (persistent) "error" else "info",
                 "code" to code?.name,
-                "message" to "${snapshot.state.wire} ${code?.name.orEmpty()}",
+                "message" to listOfNotNull("${snapshot.state.wire} ${code?.name.orEmpty()}", details).joinToString("\n"),
             ),
         )
         if (logs.size > 500) logs.removeFirst()
@@ -800,6 +895,7 @@ internal class RootTunController(
         }
         listener?.let { sink -> deliver(sink, event) }
         RootTunService.update(context, snapshot)
+        notifyRunTimeChanged()
     }
 
     private val operationsForPersistence = Mutex()
@@ -856,6 +952,20 @@ internal class RootTunController(
                     reconcile(revision, root)
                 }
             }
+        }
+    }
+
+    internal class StartupWindow(
+        private val nowMs: () -> Long,
+    ) {
+        private var deadline = nowMs() + 60_000
+
+        fun isOpen(): Boolean = nowMs() < deadline
+
+        fun beginReadiness(): Boolean {
+            if (!isOpen()) return false
+            deadline = nowMs() + 30_000
+            return true
         }
     }
 
@@ -934,12 +1044,15 @@ internal class RootTunController(
             current: RootSnapshot,
             runtimeMayExist: Boolean,
         ): Boolean =
-            current.rootManager != "magisk" && runtimeMayExist && current.rootTunEnabled &&
+            current.rootManager != "magisk" &&
+                runtimeMayExist &&
+                current.rootTunEnabled &&
                 current.authStatus != "revoked" &&
                 current.state in setOf(TunState.STARTING, TunState.RUNNING, TunState.RECOVERING, TunState.STOPPING)
 
         internal fun retryRevoked(previous: RootSnapshot): Boolean =
-            previous.rootTunEnabled && previous.authStatus == "revoked" &&
+            previous.rootTunEnabled &&
+                previous.authStatus == "revoked" &&
                 previous.lastErrorCode in setOf(RootCode.ROOT_PERMISSION_REVOKED.name, RootCode.AUTOSTART_ROOT_REVOKED.name)
 
         internal fun recheckedAuth(

@@ -200,6 +200,8 @@ class LocalIp extends _$LocalIp with AutoDisposeNotifierMixin {
   }
 }
 
+enum RunProgress { idle, starting, stopping }
+
 @Riverpod(keepAlive: true)
 class RunTime extends _$RunTime with AutoDisposeNotifierMixin {
   @override

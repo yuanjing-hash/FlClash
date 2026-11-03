@@ -114,6 +114,10 @@ class RootTunPlugin {
       _command('requestAuth', requestId);
   Future<RootTunResult<RootTunAck>> start({String? requestId}) =>
       _command('start', requestId);
+  Future<RootTunResult<RootTunAck>> selectMode(
+    RootTunMode mode, {
+    String? requestId,
+  }) => _command('selectMode', requestId, {'mode': mode.name});
   Future<RootTunResult<RootTunAck>> stop(
     RootTunStopReason reason, {
     String? requestId,

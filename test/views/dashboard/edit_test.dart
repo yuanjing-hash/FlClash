@@ -111,8 +111,7 @@ void main() {
     expect(speed, lessThan(top(tester, find.text('Available to add'))));
     expect(find.byTooltip('Add Memory info'), findsOneWidget);
     expect(find.byType(SortHandle), findsNothing);
-    // The desktop-only card has no row on a phone.
-    expect(find.byTooltip('Add Traffic takeover'), findsNothing);
+    expect(find.byTooltip('Add Traffic takeover'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     await teardown(tester);

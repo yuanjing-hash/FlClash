@@ -10,6 +10,22 @@ import java.io.File
 import java.util.zip.ZipFile
 
 class RootDiagnosticsTest {
+    @Test
+    fun startupFailuresKeepTheirPhaseAndHideCredentials() {
+        val failure =
+            RootDiagnostics.startupFailure(
+                "start/validate-config",
+                IllegalStateException(
+                    "Parse config error\npassword: hidden-password\nAuthorization: Bearer hidden-token\n\"secret\": \"hidden-json\"",
+                ),
+            )
+        assertTrue(failure.contains("phase=start/validate-config IllegalStateException: Parse config error"))
+        assertFalse(failure.contains("hidden-password"))
+        assertFalse(failure.contains("hidden-token"))
+        assertFalse(failure.contains("hidden-json"))
+        assertTrue(RootDiagnostics.startupFailure("install-runtime", IllegalStateException("x".repeat(20_000))).length <= 16_384)
+    }
+
     @get:Rule val temporary = TemporaryFolder()
 
     @Test
@@ -78,6 +94,10 @@ class RootDiagnosticsTest {
             )
         assertTrue(interrupted.manifest.contains("clock exit=0"))
         assertTrue(interrupted.manifest.contains("nft not confirmed"))
+        assertTrue(interrupted.manifest.contains("routing-options not confirmed"))
+        assertTrue(interrupted.manifest.contains("capture-counters not confirmed"))
+        assertTrue(interrupted.manifest.contains("core-state not confirmed"))
+        assertTrue(interrupted.manifest.contains("core-state-previous not confirmed"))
     }
 
     @Test

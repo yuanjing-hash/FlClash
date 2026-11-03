@@ -8,6 +8,7 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/ui/icons/icons.dart';
 import 'package:fl_clash/models/models.dart';
 import 'package:fl_clash/providers/ip_quality.dart';
+import 'package:fl_clash/providers/connection_status.dart';
 import 'package:fl_clash/providers/outbound_ip.dart';
 import 'package:fl_clash/providers/providers.dart';
 import 'package:fl_clash/providers/routed_probe.dart';
@@ -402,38 +403,39 @@ void main() {
       tester,
     ).read(outboundIpProbeProvider).entryOf(routedOutbound).phase;
 
-    testWidgets('that fails as the proxy starts shows as checking', (
-      tester,
-    ) async {
-      final core = _MockCore();
-      var epoch = 1;
-      when(() => core.outboundIp(any())).thenAnswer((invocation) async {
-        final params =
-            invocation.positionalArguments.single as OutboundIpParams;
-        final failing = params.proxyName != directOutbound && epoch == 1;
-        return failing ? null : _address(coreEpoch: epoch);
-      });
-      await tester.pumpWidget(_probingApp(core));
-      await tester.pump();
-      await tester.pump(commonDuration);
-      expect(find.text(_ip), findsOneWidget);
+    testWidgets(
+      'a failed check after readiness is shown without a start hold',
+      (tester) async {
+        final core = _MockCore();
+        var epoch = 1;
+        when(() => core.outboundIp(any())).thenAnswer((invocation) async {
+          final params =
+              invocation.positionalArguments.single as OutboundIpParams;
+          final failing = params.proxyName != directOutbound && epoch == 1;
+          return failing ? null : _address(coreEpoch: epoch);
+        });
+        await tester.pumpWidget(_probingApp(core));
+        await tester.pump();
+        await tester.pump(commonDuration);
+        expect(find.text(_ip), findsOneWidget);
 
-      start(tester);
-      await tester.pump();
-      await tester.pump(commonDuration);
-      expect(phaseOf(tester), ProbePhase.failed);
-      expect(find.text('Check failed'), findsNothing);
-      expect(find.byType(SkeletonText), findsNWidgets(2));
+        start(tester);
+        await tester.pump();
+        await tester.pump(commonDuration);
+        expect(phaseOf(tester), ProbePhase.failed);
+        expect(find.text('Check failed'), findsOneWidget);
+        expect(find.byType(SkeletonText), findsNothing);
 
-      epoch = 2;
-      containerOf(tester)
-          .read(routeTrackerProvider.notifier)
-          .applySnapshot(const RouteSnapshot(coreEpoch: 2, picksVersion: 1));
-      await tester.pumpAndSettle();
-      await tester.pump(const Duration(milliseconds: 700));
-      expect(find.text(_ip), findsOneWidget);
-      expect(find.byType(SkeletonText), findsNothing);
-    });
+        epoch = 2;
+        containerOf(tester)
+            .read(routeTrackerProvider.notifier)
+            .applySnapshot(const RouteSnapshot(coreEpoch: 2, picksVersion: 1));
+        await tester.pumpAndSettle();
+        await tester.pump(const Duration(milliseconds: 700));
+        expect(find.text(_ip), findsOneWidget);
+        expect(find.byType(SkeletonText), findsNothing);
+      },
+    );
 
     testWidgets('that fails past the start is shown, then checked again', (
       tester,
@@ -453,10 +455,8 @@ void main() {
       start(tester);
       await tester.pump();
       await tester.pump(commonDuration);
-      await tester.tap(find.byTooltip('Retry'));
-      await tester.pump();
       expect(phaseOf(tester), ProbePhase.failed);
-      expect(find.text('Check failed'), findsNothing);
+      expect(find.text('Check failed'), findsOneWidget);
       expect(asked, [directOutbound, routedOutbound]);
 
       await tester.pump(const Duration(seconds: 5));
@@ -470,6 +470,46 @@ void main() {
       expect(find.text('Check failed'), findsOneWidget);
       expect(find.byType(SkeletonText), findsNothing);
     });
+  });
+
+  testWidgets('startup hides the old IP and defers quality until ready', (
+    tester,
+  ) async {
+    var ready = false;
+    var qualityCalls = 0;
+    await tester.pumpWidget(
+      TestApp(
+        locale: const Locale('en'),
+        overrides: [
+          profilesProvider.overrideWithValue(const [_profile]),
+          connectionPhaseProvider().overrideWith(
+            (ref) => ref.watch(isStartProvider)
+                ? ConnectionPhase.running
+                : ConnectionPhase.starting,
+          ),
+          outboundIpProbeProvider.overrideWith(_Ips.new),
+          ipQualityProvider.overrideWith((_, _) async {
+            qualityCalls++;
+            expect(ready, isTrue);
+            return _residential;
+          }),
+        ],
+        child: _card(),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('Starting'), findsWidgets);
+    expect(find.text(_ip), findsNothing);
+    expect(qualityCalls, 0);
+    ready = true;
+    ProviderScope.containerOf(
+      tester.element(find.byType(CurrentOutboundCard)),
+    ).read(runTimeProvider.notifier).value = 1;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 700));
+    expect(find.text(_ip), findsOneWidget);
+    expect(qualityCalls, 1);
+    expect(find.text('Starting'), findsNothing);
   });
 
   group('the start button', () {

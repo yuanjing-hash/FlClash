@@ -1,23 +1,38 @@
 package com.follow.clash.root
 
 import android.content.Context
-import org.yaml.snakeyaml.DumperOptions
-import org.yaml.snakeyaml.LoaderOptions
-import org.yaml.snakeyaml.Yaml
-import org.yaml.snakeyaml.constructor.SafeConstructor
+import com.follow.clash.ServiceState
+import com.follow.clash.core.Core
+import com.follow.clash.models.SharedState
+import com.follow.clash.service.models.VpnOptions
+import com.google.gson.JsonParser
+import java.io.ByteArrayOutputStream
 import java.io.File
-import java.net.InetSocketAddress
+import java.io.IOException
 import java.net.ServerSocket
-import java.net.Socket
 import java.security.MessageDigest
 import java.util.UUID
+import java.util.concurrent.TimeUnit
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
 
 internal class RootRuntime(
     private val context: Context,
 ) {
     private val shell = RootShell()
+    private var phaseStartedAt = android.os.SystemClock.elapsedRealtime()
+    var startPhase: String = "idle"
+        private set(value) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            RootShell.note("phase=start/$field elapsedMs=${now - phaseStartedAt}")
+            phaseStartedAt = now
+            field = value
+        }
     private var controllerPort = 0
     private var controllerToken = ""
+
+    @Volatile private var backend: RootCoreBackend? = null
     private var stagedBytes = 0L
     private val ownEntry =
         "[ ! -L /data/adb/service.d ] && [ ! -L $AUTOSTART ] && [ -f $AUTOSTART ] && " +
@@ -29,7 +44,7 @@ internal class RootRuntime(
         shell.root(
             "if [ ! -e $BASE ]; then echo disabled; " +
                 "elif [ ! -L $BASE/scripts/runtime.sh ] && [ -f $BASE/scripts/runtime.sh ]; then " +
-                "/system/bin/sh $BASE/scripts/runtime.sh status; " +
+                "sh $BASE/scripts/runtime.sh status; " +
                 "else echo 'stopping CLEANUP_FAILED'; false; fi; result=\$?; " +
                 "if $ownEntry; then echo autostart:yes; else echo autostart:no; fi; exit \$result",
         )
@@ -40,151 +55,181 @@ internal class RootRuntime(
     ): Boolean {
         val existing = status()
         if (!existing.success || !existing.stdout.startsWith("running")) return false
-        val credentials = shell.root("cat $BASE/config/controller.port $BASE/config/health.http")
-        val lines = credentials.stdout.lines()
-        controllerPort = lines.firstOrNull()?.toIntOrNull() ?: 0
-        controllerToken =
-            lines
-                .firstOrNull { it.startsWith("Authorization: Bearer ") }
-                ?.removePrefix("Authorization: Bearer ")
-                ?.trim()
-                .orEmpty()
-        if (!apiHealthy()) return false
+        if (!loadSession()) return false
+        if (!apiHealthy() && backend == null) return false
         installScripts()
         if (manager != null && authChannel != null) configureAuthorization(manager, authChannel)
-        check(command("start").success)
+        command("start").requireSuccess("Reattach root supervisor")
         if (autostartEnabled()) check(setAutostart(true))
         return true
     }
 
     fun start(
-        selections: Map<String, String>,
+        sharedState: () -> SharedState,
         manager: String,
         authChannel: () -> String,
         allowed: () -> Boolean,
-    ) {
+    ): Boolean {
         didInstall = false
-        if (attach(manager, authChannel())) return
-        check(stop()) { "Previous root runtime could not be cleaned" }
-        check(allowed()) { "Start superseded or expired" }
+        startPhase = "inspect-runtime"
+        val requested = sharedState().vpnOptions
+        val previous = shell.root("cat $BASE/config/vpn-options.json", 1_000)
+        val applied =
+            runCatching {
+                com.google.gson
+                    .Gson()
+                    .fromJson(previous.stdout, VpnOptions::class.java)
+            }.getOrNull()
+        if (previous.success && requested != null && requested == applied && attach(manager, authChannel())) return true
+        startPhase = "cleanup-previous-runtime"
+        stopResult("cleanup").requireSuccess("Clean previous root runtime")
+        if (!allowed()) return false
+        backend?.let {
+            backend = null
+            Core.useBackend(null)
+        }
+        startPhase = "pause-embedded-core"
+        if (!Core.beginRootTransition(allowed)) return false
         stagedBytes = 0
+        startPhase = "install-runtime"
         install()
         didInstall = true
+        startPhase = "configure-authorization"
         configureAuthorization(manager, authChannel())
-        val profile = File(context.filesDir, "config.yaml")
-        check(profile.isFile && profile.length() in 1..MAX_CONFIG) { "Active config.yaml is missing or too large" }
-        val options =
-            LoaderOptions().apply {
-                isAllowDuplicateKeys = false
-                maxAliasesForCollections = 25
-                codePointLimit = MAX_CONFIG.toInt()
-                nestingDepthLimit = 64
+        startPhase = "prepare-ui-config"
+        val shared = sharedState()
+        val setup =
+            checkNotNull(shared.setupParams) { "UI Core setup parameters are unavailable" }.let { params ->
+                params.copy(selectedMap = params.selectedMap + currentSelections())
             }
-        val loaded = profile.inputStream().use { Yaml(SafeConstructor(options)).load<Any>(it) }
-
-        @Suppress("UNCHECKED_CAST")
-        val config = (loaded as? Map<String, Any?>)?.toMutableMap() ?: error("Active config is not a mapping")
-
-        @Suppress("UNCHECKED_CAST")
-        val groups = config["proxy-groups"] as? List<Map<String, Any?>>
-        config["proxy-groups"] =
-            groups
-                ?.map { group ->
-                    val selected = selections[group["name"]]
-                    val members = group["proxies"] as? List<*>
-                    if (group["type"] == "select" && selected != null && members?.contains(selected) == true) {
-                        group + ("proxies" to (listOf(selected) + members.filter { it != selected }))
-                    } else {
-                        group
-                    }
-                }.orEmpty()
-        stagePaths(config)
-        listOf("geoip.dat", "geosite.dat", "geoip.metadb", "ASN.mmdb", "Country.mmdb").forEach { name ->
-            val asset = File(context.filesDir, name)
-            if (asset.isFile) copyAsset(asset, "$BASE/config/$name")
-        }
+        check(File(context.filesDir, "config.yaml").isFile) { "Active UI config.yaml is missing" }
+        val gson = com.google.gson.Gson()
+        val appUid = context.applicationInfo.uid
+        val packages = context.packageManager.getInstalledApplications(0).associate { it.uid.toString() to it.packageName }
+        val systemDns = RootLaunchConfig.systemDns(context)
+        Core.updateDnsCapture(systemDns.joinToString(","))
+        val prepared =
+            RootLaunchConfig.prepare(
+                shared.copy(setupParams = setup),
+                appUid,
+                { name ->
+                    runCatching { context.packageManager.getApplicationInfo(name, 0).uid }.getOrNull()
+                },
+                packages,
+                systemDns,
+            )
         controllerPort = ServerSocket(0, 1, java.net.InetAddress.getByName("127.0.0.1")).use { it.localPort }
-        controllerToken = UUID.randomUUID().toString()
-        config.putAll(
+        controllerToken = UUID.randomUUID().toString() + UUID.randomUUID().toString()
+        val launch =
             mapOf(
-                "external-controller" to "127.0.0.1:$controllerPort",
-                "secret" to controllerToken,
-                "allow-lan" to false,
-                "bind-address" to "127.0.0.1",
-                "ipv6" to false,
-                "routing-mark" to 1073741824,
-                "geo-auto-update" to false,
-                "interface-name" to "",
-                "find-process-mode" to "off",
-                "port" to 0,
-                "socks-port" to 0,
-                "mixed-port" to 0,
-                "redir-port" to 0,
-                "tproxy-port" to 0,
-                "tun" to
-                    mapOf(
-                        "enable" to true,
-                        "device" to "flcrtun0",
-                        "stack" to "gvisor",
-                        "mtu" to 1500,
-                        "auto-route" to true,
-                        "auto-redirect" to false,
-                        "auto-detect-interface" to true,
-                        "strict-route" to true,
-                        "dns-hijack" to listOf("any:53"),
-                        "iproute2-table-index" to 2022,
-                        "iproute2-rule-index" to 9000,
-                    ),
-            ),
+                "init" to mapOf("home-dir" to context.filesDir.path, "version" to android.os.Build.VERSION.SDK_INT),
+                "updates" to (shared.updateParams ?: JsonParser.parseString(Core.currentUpdates())),
+                "port" to controllerPort,
+                "token" to controllerToken,
+                "appUid" to appUid,
+                "ready" to "$BASE/run/core-ready",
+            ) + prepared.launch
+        val session = File(context.filesDir, "root-core-session.json")
+        session.writeText(gson.toJson(mapOf("port" to controllerPort, "token" to controllerToken)))
+        writeAll(
+            prepared.files.mapKeys { (name, _) -> "config/$name" }.mapValues { (_, value) -> value.toByteArray() } +
+                mapOf(
+                    "config/root-core.json" to gson.toJson(launch).toByteArray(),
+                    "config/config.yaml" to "# FlClash shared Core reads the active UI profile from app storage.\n".toByteArray(),
+                    "config/app.package" to context.packageName.toByteArray(),
+                ),
         )
-        listOf(
-            "external-controller-tls",
-            "external-controller-unix",
-            "external-controller-pipe",
-            "external-ui",
-            "external-ui-url",
-            "listeners",
-        ).forEach(config::remove)
-        @Suppress("UNCHECKED_CAST")
-        val dns = (config["dns"] as? Map<String, Any?>)?.toMutableMap() ?: mutableMapOf()
-        dns.putAll(mapOf("enable" to true, "ipv6" to false, "listen" to "", "enhanced-mode" to "fake-ip"))
-        if (dns["nameserver"] == null) dns["nameserver"] = listOf("https://1.1.1.1/dns-query")
-        if (dns["default-nameserver"] == null) dns["default-nameserver"] = listOf("1.1.1.1")
-        config["dns"] = dns
-        val yaml = Yaml(DumperOptions().apply { defaultFlowStyle = DumperOptions.FlowStyle.BLOCK }).dump(config)
-        write("config/config.yaml", yaml.toByteArray())
-        write(
-            "config/health.http",
-            "GET /version HTTP/1.0\r\nHost: 127.0.0.1\r\nAuthorization: Bearer $controllerToken\r\n\r\n".toByteArray(),
-        )
-        write("config/controller.port", controllerPort.toString().toByteArray())
-        write("config/app.package", context.packageName.toByteArray())
+        startPhase = "validate-ui-config"
         val validation =
             shell.root(
-                "export TMPDIR=$BASE/tmp; $BASE/bin/mihomo -t -d $BASE/config -f $BASE/config/config.yaml >$BASE/logs/validation.log 2>&1",
-                4_000,
+                "export TMPDIR=$BASE/tmp; exec $BASE/bin/mihomo --check --root-config $BASE/config/root-core.json >$BASE/logs/validation.log 2>&1",
+                15_000,
             )
-        check(validation.success) { "Mihomo config validation failed; see validation.log" }
-        if (!allowed()) return
+        if (!validation.success) {
+            val evidence = shell.root("tail -c 8192 $BASE/logs/validation.log", 1_000)
+            validation.copy(stdout = evidence.stdout).requireSuccess("FlClash UI config validation")
+        }
+        if (!allowed()) return false
+        startPhase = "launch-supervisor"
         write("config/root-tun-enabled", "1\n".toByteArray())
-        check(command("settings").success) { "Root settings could not be persisted" }
-        check(command("start").success) { "Root supervisor failed to start" }
+        command("settings").requireSuccess("Persist root settings")
+        command("start").requireSuccess("Start root supervisor")
+        startPhase = "await-core"
+        return true
     }
 
-    fun stop(): Boolean =
-        shell
-            .root(
-                "if [ ! -e $BASE ]; then exit 0; fi; " +
-                    "if [ ! -f $BASE/scripts/runtime.sh ] && [ ! -f $BASE/state/owned ]; then exit 0; fi; " +
-                    "[ ! -L $BASE/scripts/runtime.sh ] && /system/bin/sh $BASE/scripts/runtime.sh stop",
-                4_000,
-            ).success
+    fun stop(): Boolean {
+        val stopped = stopResult().success
+        return stopped && detachCore(wait = true)
+    }
+
+    fun detachCore(wait: Boolean = false): Boolean {
+        backend = null
+        val shared = ServiceState.currentSharedState
+        val updates = shared.updateParams ?: JsonParser.parseString(Core.currentUpdates())
+        val selections = currentSelections()
+        Core.useBackend(null)
+        val gson = com.google.gson.Gson()
+        val init = mapOf("home-dir" to context.filesDir.path, "version" to android.os.Build.VERSION.SDK_INT, "preserve-responses" to true)
+        val setup = shared.setupParams?.let { it.copy(selectedMap = it.selectedMap + selections) }
+        val restoring =
+            Core.restoreEmbedded(
+                listOf(
+                    gson.toJson(mapOf("method" to "initClash", "arguments" to init)),
+                    gson.toJson(mapOf("method" to "setupConfig", "arguments" to setup)),
+                    gson.toJson(mapOf("method" to "updateConfig", "arguments" to updates)),
+                ),
+            )
+        return !wait || runCatching { restoring.get(15, TimeUnit.SECONDS) }.getOrDefault(false)
+    }
+
+    fun dnsProbe(): RootHealth.DnsProbe = if (backend?.dnsEnabled() == true) RootHealth.dns() else RootHealth.DnsProbe("ok", "ok")
+
+    val startupError: String? get() = backend?.startupError
+
+    private fun currentSelections(): Map<String, String> =
+        JsonParser
+            .parseString(Core.currentSelections())
+            .asJsonObject
+            .entrySet()
+            .associate { (key, value) -> key to value.asString }
+
+    private fun loadSession(): Boolean =
+        runCatching {
+            val session = JsonParser.parseString(File(context.filesDir, "root-core-session.json").readText()).asJsonObject
+            controllerPort = session["port"].asInt
+            controllerToken = session["token"].asString
+            true
+        }.getOrDefault(false)
+
+    fun attachCore(): Boolean {
+        if (com.follow.clash.BuildConfig.ROOT_TUN_SAFE_MODE) return false
+        if (!loadSession()) return false
+        return apiHealthy()
+    }
+
+    private fun stopResult(operation: String = "stop"): ShellResult =
+        try {
+            val script = File.createTempFile("root-tun-cleanup-", ".sh", context.cacheDir)
+            try {
+                context.assets.open("root-tun/runtime.sh").use { input -> script.outputStream().use { input.copyTo(it) } }
+                shell.root(
+                    "if [ ! -e $BASE ] && [ ! -L $BASE ]; then exit 0; fi; " +
+                        "exec sh ${RootShell.quote(script.path)} $operation",
+                    15_000,
+                )
+            } finally {
+                script.delete()
+            }
+        } catch (error: IOException) {
+            ShellResult(1, "", "Stage cleanup script failed: ${error.message}")
+        }
 
     fun delete(): Boolean {
-        if (!command("cleanup", 4_000).success) return false
+        if (!stopResult("cleanup").success) return false
         val retained =
             shell.root(
-                "for f in core.log validation.log watchdog.log transitions.log boot.log; do echo \"[\$f]\"; tail -c 131072 $BASE/logs/\$f 2>/dev/null; done",
+                "for f in core.log validation.log launch.log watchdog.log transitions.log boot.log; do echo \"[\$f]\"; tail -c 131072 $BASE/logs/\$f 2>/dev/null; done",
             )
         File(context.cacheDir, "root-tun-last-runtime.log").writeText(RootDiagnostics.redact(retained.stdout))
         val retainedDiff = File.createTempFile("root-tun-restore-", ".txt", context.cacheDir)
@@ -216,13 +261,13 @@ internal class RootRuntime(
                     "umask 077; [ ! -L /data/adb/service.d ] && [ ! -L $AUTOSTART ] && " +
                         "{ [ ! -e $AUTOSTART ] || { $ownEntry; }; } && [ ! -L $BASE ] && [ -d $BASE/config ] && " +
                         "[ -z \"\$(find $BASE -type l -print)\" ] && " +
-                        "[ -s $BASE/config/config.yaml ] && [ -f $BASE/scripts/runtime.sh ] && " +
+                        "[ -s $BASE/config/root-core.json ] && [ -f $BASE/bin/proxy-helper.jar ] && [ -f $BASE/scripts/runtime.sh ] && " +
                         "[ \"\$(cat $BASE/config/root-tun-enabled)\" = 1 ] && " +
                         "mkdir -p /data/adb/service.d && cat >$BASE/tmp/autostart-entry && " +
                         "chmod 700 $BASE/tmp/autostart-entry && chown 0:0 $BASE/tmp/autostart-entry && " +
                         "echo 1 >$BASE/config/autostart-enabled.tmp && chmod 600 $BASE/config/autostart-enabled.tmp && " +
                         "mv $BASE/config/autostart-enabled.tmp $BASE/config/autostart-enabled && " +
-                        "mv $BASE/tmp/autostart-entry $AUTOSTART && /system/bin/sh $BASE/scripts/runtime.sh settings",
+                        "mv $BASE/tmp/autostart-entry $AUTOSTART && sh $BASE/scripts/runtime.sh settings",
                     2_300,
                     entry,
                 )
@@ -233,7 +278,7 @@ internal class RootRuntime(
                         "[ -z \"\$(find $BASE -type l -print)\" ] && " +
                         "echo 0 >$BASE/config/autostart-enabled.tmp && chmod 600 $BASE/config/autostart-enabled.tmp && " +
                         "mv $BASE/config/autostart-enabled.tmp $BASE/config/autostart-enabled && " +
-                        "/system/bin/sh $BASE/scripts/runtime.sh settings; fi",
+                        "sh $BASE/scripts/runtime.sh settings; fi",
                     2_300,
                 )
             }
@@ -243,26 +288,30 @@ internal class RootRuntime(
     fun restoreDiffExists(): Boolean = shell.root("[ -s $BASE/logs/restore-diff.txt ]").success
 
     fun healthy(status: ShellResult = status()): Boolean {
-        if (!status.success) return false
+        if (!readyForDns(status)) return false
         return apiHealthy()
     }
 
+    @Synchronized
     private fun apiHealthy(): Boolean {
         if (controllerPort == 0) return false
-        return runCatching {
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress("127.0.0.1", controllerPort), 300)
-                socket.soTimeout = 300
-                socket.getOutputStream().write(
-                    "GET /version HTTP/1.0\r\nHost: 127.0.0.1\r\nAuthorization: Bearer $controllerToken\r\n\r\n".toByteArray(),
-                )
-                socket
-                    .getInputStream()
-                    .bufferedReader()
-                    .readLine()
-                    ?.contains(" 200 ") == true
+        backend?.let { return it.healthy() }
+        val candidate = RootCoreBackend(controllerPort, controllerToken)
+        return try {
+            candidate.connect()
+            if (!candidate.healthy()) {
+                candidate.close()
+                false
+            } else {
+                startPhase = "handoff-ui-config"
+                Core.useBackend(candidate)
+                backend = candidate
+                candidate.healthy()
             }
-        }.getOrDefault(false)
+        } catch (_: Exception) {
+            candidate.close()
+            false
+        }
     }
 
     fun diagnostics(
@@ -287,7 +336,7 @@ internal class RootRuntime(
         val diagnosticShell = RootShell(4 * 1024 * 1024)
         val result =
             if (privileged) {
-                diagnosticShell.root("/system/bin/sh", 15_000, script)
+                diagnosticShell.root("sh", 15_000, script)
             } else {
                 diagnosticShell.execute(listOf("sh", "-c", "export TMPDIR=${RootShell.quote(context.cacheDir.path)}; sh"), 15_000, script)
             }
@@ -305,25 +354,77 @@ internal class RootRuntime(
                     "mkdir -p $BASE/bin $BASE/config/assets $BASE/scripts $BASE/state $BASE/run $BASE/logs $BASE/tmp; " +
                     "chmod 700 $BASE $BASE/bin $BASE/config $BASE/config/assets $BASE/scripts $BASE/state $BASE/run $BASE/logs $BASE/tmp",
             )
-        check(setup.success) { "Unsafe or inaccessible runtime directory" }
+        setup.requireSuccess("Create root runtime directories")
+        val identity = "${context.packageName}:${context.packageManager.getPackageInfo(
+            context.packageName,
+            0,
+        ).lastUpdateTime}:${library.length()}"
+        val cached =
+            shell.root(
+                "[ \"\$(cat $BASE/config/runtime.apk 2>/dev/null)\" = ${RootShell.quote(identity)} ] && " +
+                    "[ -x $BASE/bin/mihomo ] && [ -f $BASE/bin/proxy-helper.jar ] && " +
+                    "sha256sum -c $BASE/config/runtime.sha256 >/dev/null",
+            )
+        if (cached.success) return
         copyAsset(library, "$BASE/bin/mihomo.next")
-        check(shell.root("chmod 700 $BASE/bin/mihomo.next && mv $BASE/bin/mihomo.next $BASE/bin/mihomo").success)
+        shell
+            .root("chmod 700 $BASE/bin/mihomo.next && mv $BASE/bin/mihomo.next $BASE/bin/mihomo")
+            .requireSuccess("Install executable mihomo")
+        installProxyHelper()
         installScripts()
+        shell
+            .root(
+                "sha256sum $BASE/bin/mihomo $BASE/bin/proxy-helper.jar >$BASE/config/runtime.sha256",
+            ).requireSuccess("Record runtime integrity")
+        write("config/runtime.apk", identity.toByteArray())
+    }
+
+    private fun installProxyHelper() {
+        val staged = File.createTempFile("root-helper-", ".jar", context.cacheDir)
+        try {
+            var count = 0
+            var size = 0L
+            ZipOutputStream(staged.outputStream()).use { output ->
+                output.setLevel(0)
+                ZipFile(context.applicationInfo.sourceDir).use { apk ->
+                    for (entry in apk.entries()) {
+                        if (!entry.name.matches(Regex("classes\\d*\\.dex"))) continue
+                        size += entry.size
+                        check(entry.size > 0 && size <= MAX_ASSET) { "APK DEX exceeds size limit" }
+                        output.putNextEntry(ZipEntry(entry.name))
+                        apk.getInputStream(entry).use { it.copyTo(output) }
+                        output.closeEntry()
+                        count++
+                    }
+                }
+            }
+            check(count > 0) { "APK has no Root helper" }
+            copyAsset(staged, "$BASE/bin/proxy-helper.jar")
+            shell.root("chmod 400 $BASE/bin/proxy-helper.jar").requireSuccess("Protect Root helper")
+        } finally {
+            staged.delete()
+        }
     }
 
     private fun installScripts() {
-        for (name in listOf("authorization.sh", "runtime.sh")) {
-            write("scripts/$name", context.assets.open("root-tun/$name").use { it.readBytes() })
-        }
+        writeAll(
+            listOf("authorization.sh", "runtime.sh").associate { name ->
+                "scripts/$name" to context.assets.open("root-tun/$name").use { it.readBytes() }
+            },
+        )
     }
 
     private fun configureAuthorization(
         manager: String,
         authChannel: String,
     ) {
-        write("config/app.uid", "${context.applicationInfo.uid}\n".toByteArray())
-        write("config/root.manager", "$manager\n".toByteArray())
-        write("config/app-auth", authChannel.toByteArray())
+        writeAll(
+            mapOf(
+                "config/app.uid" to "${context.applicationInfo.uid}\n".toByteArray(),
+                "config/root.manager" to "$manager\n".toByteArray(),
+                "config/app-auth" to authChannel.toByteArray(),
+            ),
+        )
     }
 
     private fun stagePaths(node: MutableMap<String, Any?>) {
@@ -382,21 +483,24 @@ internal class RootRuntime(
                     "[ \"\$(sha256sum ${RootShell.quote(destination)} | cut -d' ' -f1)\" = '$hash' ]",
                 3_000,
             )
-        check(copied.success) { "Asset copy or digest verification failed" }
+        copied.requireSuccess("Copy and verify ${source.name}")
     }
 
     private fun write(
         relative: String,
         bytes: ByteArray,
     ) {
-        check(
-            shell
-                .root(
-                    "cat >$BASE/$relative.tmp && chmod 600 $BASE/$relative.tmp && mv $BASE/$relative.tmp $BASE/$relative",
-                    2_000,
-                    bytes,
-                ).success,
-        )
+        shell
+            .root(
+                "cat >$BASE/$relative.tmp && chmod 600 $BASE/$relative.tmp && mv $BASE/$relative.tmp $BASE/$relative",
+                2_000,
+                bytes,
+            ).requireSuccess("Write $relative")
+    }
+
+    private fun writeAll(files: Map<String, ByteArray>) {
+        val (script, input) = batchPublication(BASE, files)
+        shell.root(script, 4_000, input).requireSuccess("Publish runtime settings")
     }
 
     private fun command(
@@ -404,7 +508,7 @@ internal class RootRuntime(
         timeoutMs: Long = 2_000,
     ): ShellResult =
         shell.root(
-            "[ ! -L $BASE/scripts/runtime.sh ] && /system/bin/sh $BASE/scripts/runtime.sh $operation",
+            "[ ! -L $BASE/scripts/runtime.sh ] && sh $BASE/scripts/runtime.sh $operation",
             timeoutMs,
         )
 
@@ -413,5 +517,84 @@ internal class RootRuntime(
         private const val AUTOSTART = "/data/adb/service.d/flclash-root.sh"
         private const val MAX_CONFIG = 8L * 1024 * 1024
         private const val MAX_ASSET = 256L * 1024 * 1024
+
+        internal fun batchPublication(
+            base: String,
+            files: Map<String, ByteArray>,
+        ): Pair<String, ByteArray> {
+            val input = ByteArrayOutputStream()
+            files.values.forEach(input::write)
+            val script = StringBuilder("set -e; umask 077; ")
+            script.append("publication_input=\$(mktemp ${RootShell.quote("$base/.publication.XXXXXX")}); ")
+            val cleanup =
+                "publication_status=\$?; if [ \"\$publication_status\" -ne 0 ]; then " +
+                    "printf 'root-publication: file=%s exit=%s\\n' \"\$publication_step\" \"\$publication_status\" >&2; fi; " +
+                    "rm -f \"\$publication_input\""
+            script.append("publication_step=input; trap ${RootShell.quote(cleanup)} EXIT; ")
+            script.append("cat >\"\$publication_input\"; publication_size=\$(wc -c <\"\$publication_input\"); ")
+            script.append(
+                "[ \"\$publication_size\" -eq ${input.size()} ] || { " +
+                    "printf 'root-publication: expected=%s actual=%s\\n' ${input.size()} \"\$publication_size\" >&2; exit 1; }; ",
+            )
+            var offset = 0
+            for ((name, bytes) in files) {
+                require(name.matches(Regex("[A-Za-z0-9_./-]+")) && !name.contains(".."))
+                val path = RootShell.quote("$base/$name")
+                val temporary = RootShell.quote("$base/$name.tmp")
+                script.append("publication_step=${RootShell.quote(name)}; ")
+                if (bytes.isEmpty()) {
+                    script.append(": >$temporary; ")
+                } else {
+                    script.append("tail -c +${offset + 1} \"\$publication_input\" | head -c ${bytes.size} >$temporary; ")
+                }
+                script.append("[ \"\$(wc -c <$temporary)\" -eq ${bytes.size} ]; ")
+                script.append("chmod 600 $temporary; mv $temporary $path; ")
+                offset += bytes.size
+            }
+            return script.toString() to input.toByteArray()
+        }
+
+        internal fun readyForDns(status: ShellResult): Boolean =
+            status.success &&
+                status.stdout
+                    .lineSequence()
+                    .firstOrNull()
+                    ?.substringBefore(' ') == "running"
+
+        internal fun dnsProbePolicy(existing: Map<*, *>?): Map<*, *> =
+            mapOf(RootHealth.PROBE_DOMAIN to "rcode://success") + existing.orEmpty().filterKeys { it != RootHealth.PROBE_DOMAIN }
+
+        private val GEO_ASSETS =
+            linkedMapOf(
+                "geoip.metadb" to listOf("GEOIP.metadb", "Country.mmdb", "geoip.db"),
+                "GeoIP.dat" to listOf("GEOIP.dat"),
+                "GeoSite.dat" to listOf("GEOSITE.dat"),
+                "ASN.mmdb" to listOf("ASN.mmdb"),
+            )
+
+        internal fun geoAssets(directory: File): Map<String, File> {
+            val files =
+                directory
+                    .listFiles()
+                    .orEmpty()
+                    .filter { it.isFile && it.length() > 0 }
+                    .sortedBy { it.name }
+            return GEO_ASSETS
+                .mapNotNull { (target, aliases) ->
+                    aliases
+                        .firstNotNullOfOrNull { alias -> files.firstOrNull { it.name.equals(alias, ignoreCase = true) } }
+                        ?.let { target to it }
+                }.toMap()
+        }
+
+        internal fun publishGeoAsset(
+            directory: String,
+            target: String,
+        ): String {
+            val aliases = GEO_ASSETS.getValue(target).joinToString(" -o ") { "-iname ${RootShell.quote(it)}" }
+            return "mv ${RootShell.quote("$directory/$target.next")} ${RootShell.quote("$directory/$target")} && " +
+                "find ${RootShell.quote(directory)} -maxdepth 1 -type f \\( $aliases \\) " +
+                "! -name ${RootShell.quote(target)} -exec rm -f {} \\;"
+        }
     }
 }

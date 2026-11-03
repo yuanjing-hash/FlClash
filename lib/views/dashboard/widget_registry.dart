@@ -39,7 +39,7 @@ extension DashboardWidgetView on DashboardWidget {
       DashboardWidget.currentOutbound => appLocalizations.status,
       DashboardWidget.networkSpeed => appLocalizations.networkSpeed,
       DashboardWidget.outboundMode => appLocalizations.outboundMode,
-      DashboardWidget.vpnButton => 'VPN',
+      DashboardWidget.vpnButton => appLocalizations.networkTakeover,
       DashboardWidget.networkTakeover => appLocalizations.networkTakeover,
       DashboardWidget.serviceStatus => appLocalizations.serviceStatus,
       DashboardWidget.profiles => appLocalizations.profile,

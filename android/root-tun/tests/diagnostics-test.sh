@@ -51,7 +51,7 @@ grep -q 'stage=user_unlocked elapsedMs=1234' "$WORK/evidence"
 grep -q 'header: 85 83 75 127' "$WORK/evidence"
 grep -q 'notification code=AUTOSTART_FAILED exit=0' "$WORK/evidence"
 grep -q 'am-exit=137' "$WORK/evidence"
-for item in clock boot-state tools boot-evidence auth-data package device grep processes directories runtime-state notifications ipv4 ipv6 iptables ip6tables nft selinux connectivity restore-diff baseline logs; do
+for item in clock boot-state tools boot-evidence auth-data package device grep processes directories runtime-state notifications ipv4 ipv6 routing-options capture-counters iptables ip6tables nft selinux connectivity restore-diff baseline logs; do
     grep -q "^$item exit=" "$WORK/evidence"
 done
 [ "$(wc -c < "$WORK/evidence")" -lt 4194304 ]

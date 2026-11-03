@@ -8417,10 +8417,10 @@ class AppLocalizations {
     );
   }
 
-  /// `Root TUN startup timed out (10 seconds). Changes were rolled back.`
+  /// `Root TUN startup timed out. Changes were rolled back.`
   String get rootTunErrorStartTimeout {
     return Intl.message(
-      'Root TUN startup timed out (10 seconds). Changes were rolled back.',
+      'Root TUN startup timed out. Changes were rolled back.',
       name: 'rootTunErrorStartTimeout',
       desc: '',
       args: [],
