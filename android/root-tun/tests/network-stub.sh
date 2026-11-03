@@ -33,6 +33,13 @@ case "$name" in
         [ ! -f "$FAKE_NET/${name%-save}.chain" ] || echo '-N FCR_OUTPUT'
         echo COMMIT
         ;;
+    iptables-restore|ip6tables-restore)
+        family=${name%-restore}
+        cat > "$FAKE_NET/$family.restore"
+        grep -q '^COMMIT$' "$FAKE_NET/$family.restore" || exit 1
+        if grep -q '^:FCR_OUTPUT - ' "$FAKE_NET/$family.restore"; then touch "$FAKE_NET/$family.chain"; fi
+        if grep -q -- '-j REJECT' "$FAKE_NET/$family.restore"; then touch "$FAKE_NET/$family.guard"; fi
+        ;;
     iptables|ip6tables)
         shift 2
         case "$1" in

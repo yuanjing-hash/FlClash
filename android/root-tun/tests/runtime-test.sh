@@ -25,11 +25,12 @@ finish() {
 }
 trap finish EXIT
 trap 'exit 1' INT TERM
-for stub in ip iptables ip6tables iptables-save ip6tables-save settings nc pm log; do
+for stub in ip iptables ip6tables iptables-save ip6tables-save iptables-restore ip6tables-restore settings nc pm log; do
     ln -s "$TESTS/network-stub.sh" "$WORK/bin/$stub"
 done
 export PATH="$WORK/bin:$PATH"
 R=$WORK/runtime
+export ROOT_READY_FILE="$R/run/core-ready"
 mkdir -p "$R/scripts" "$R/run" "$R/state" "$R/logs" "$R/config" "$R/bin" "$R/tmp"
 sed -e "s|^R=/data/adb/flclash-root$|R=$R|" \
     -e 's/ = 0 ]/ = '"$(id -u)"' ]/' -e '/^export PATH=/d' -e 's|/system/bin/sh|/bin/sh|g' \
@@ -40,6 +41,7 @@ cat > "$R/bin/mihomo" <<'CORE'
 trap 'rm -f "$FAKE_NET/tun"; exit 0' TERM INT
 printf '%s\n' start >> "$FAKE_NET/core-starts"
 touch "$FAKE_NET/tun"
+printf '%s\n' "$$" > "$ROOT_READY_FILE"
 while :; do sleep 0.1; done
 CORE
 chmod +x "$R/bin/mihomo"
@@ -113,19 +115,18 @@ wait_for changed supervisor "$supervisor"
 supervisor=$(pid_of supervisor)
 TEST_PIDS="$TEST_PIDS $supervisor"
 echo 'PASS supervisor takeover without core restart'
-touch "$FAKE_NET/health-timeout"
+mv "$ROOT_READY_FILE" "$ROOT_READY_FILE.pending"
 : > "$FAKE_NET/calls"
 kill -KILL "$supervisor"
-wait_for test -f "$FAKE_NET/health-delayed"
 sleep 4
 [ -f "$R/state/owned" ] && [ -f "$FAKE_NET/iptables.guard" ]
 if grep -E '(-D OUTPUT|-X FCR_OUTPUT|rule del|route flush|link delete)' "$FAKE_NET/calls"; then exit 1; fi
-rm -f "$FAKE_NET/health-timeout"
+mv "$ROOT_READY_FILE.pending" "$ROOT_READY_FILE"
 wait_for changed supervisor "$supervisor"
 [ "$core" = "$(pid_of core)" ]
 supervisor=$(pid_of supervisor)
 TEST_PIDS="$TEST_PIDS $supervisor"
-echo 'PASS slow health checks retry behind the guard and recover without restarting core'
+echo 'PASS missing native readiness retries behind the guard and recovers without restarting core'
 : > "$FAKE_NET/calls"
 kill -KILL "$core"
 wait_for changed core "$core"

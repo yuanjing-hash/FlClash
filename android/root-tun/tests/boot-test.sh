@@ -5,7 +5,8 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 sed -e "s|^R=/data/adb/flclash-root$|R=$WORK/runtime|" \
     -e '/^export PATH=/d' -e '/^safe_tree || exit 1/,$d' \
-    -e 's|/system/bin/sh|/bin/sh|g' "$TESTS/../../app/src/main/assets/root-tun/runtime.sh" > "$WORK/functions.sh"
+    -e 's|/system/bin/sh|/bin/sh|g' -e "s|/system/bin/app_process|$WORK/app_process|g" \
+    "$TESTS/../../app/src/main/assets/root-tun/runtime.sh" > "$WORK/functions.sh"
 # shellcheck source=/dev/null
 . "$WORK/functions.sh"
 IDENTITY="$$ $(ticks "$$") $BOOT"
@@ -38,6 +39,11 @@ case "${AM_STATE:-RUNNING_UNLOCKED}" in
 esac
 AM
 chmod +x "$WORK/am"
+cat > "$WORK/app_process" <<'PREPARE'
+#!/bin/sh
+[ "$*" = '/system/bin com.follow.clash.root.RootProxyMain prepare' ]
+PREPARE
+chmod +x "$WORK/app_process"
 export PATH="$WORK:$PATH" R
 ensure_watchdog() { return 0; }
 package_status() { echo present; }
