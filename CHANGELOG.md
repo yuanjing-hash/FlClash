@@ -1,5 +1,38 @@
 # Changelog
 
+## v1.0.0 (2026-11-03)
+
+**Features**
+
+- **android** Android Root TUN with shared profile, routing, DNS and app controls, dashboard mode selection and startup status (901223e)
+- **android** Clean root tun on permission revocation (9b1bce9)
+- **android** Add root tun watchdog, uninstall cleanup and autostart hardening (7a8406f)
+- **android** Native Android Root TUN control and diagnostic sharing (e4e2f94)
+- **flutter** Android Root TUN controls, authorization guidance and diagnostics (1f5ea1f)
+
+**Bug Fixes**
+
+- **android** Isolate root diagnostic temp files and bound streamed output (f9b4cf4)
+- **android** Slow authorization probes for unowned failed root runtimes (2702c1e)
+- **android** Defer missing root report cleanup errors until grace expires (8e9cb62)
+- **flutter** Deduplicate Root TUN prompts across screens for each session (e0df745)
+- **android** Preserve bounded diagnostic evidence with per-item manifests (dc8802c)
+- **android** Reconcile root revocation and abnormal sessions with bounded recovery (a1c58cb)
+- **android** Expire root reports, back off stale reconciliation and slow idle auth polling (5b060a1)
+- **android** Extend am user-state timeout and refresh report heading (a42c58f)
+- **android** Avoid magisk background su prompts (6fb6246)
+- **android** Harden root tun boot locks and watchdog recovery (2fe74a5)
+- **android** Address root tun review suggestions (e37003d)
+- **android** Address root tun re-review notes (8f38fc6)
+- **common** Tolerate a concurrent delete in safeDelete (9251595)
+- **android** Address root tun review rework for device testing (77f62e6)
+- **flutter** Fix Root TUN recovery controls and diagnostic export (b40899b)
+- **android** Ignore java.beans references from snakeyaml in R8 (4fa3749)
+
+**Performance**
+
+- **flutter** Export Root TUN diagnostics without loading the archive into Dart memory (000bc7a)
+
 ## v0.9.1 (2026-10-17)
 
 **Breaking Changes**
