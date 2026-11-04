@@ -111,3 +111,34 @@ func TestRootRejectsInvalidNetworkOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestRootPerAppUsesRealDNSWithoutChangingOtherModesOrEnablingDNS(t *testing.T) {
+	previous := rootOptions
+	defer func() { rootOptions = previous }()
+	for _, test := range []struct {
+		name       string
+		options    *RootOptions
+		dnsEnabled bool
+		want       constant.DNSMode
+	}{
+		{"VPN", nil, true, constant.DNSFakeIP},
+		{"Root all apps", &RootOptions{Enable: true, Stack: "mips"}, true, constant.DNSFakeIP},
+		{"Root per-app", &RootOptions{Enable: true, PerApp: true, Stack: "mips"}, true, constant.DNSMapping},
+		{"TUN disabled", &RootOptions{PerApp: true, Stack: "mips"}, true, constant.DNSFakeIP},
+		{"DNS disabled", &RootOptions{Enable: true, PerApp: true, Stack: "mips"}, false, constant.DNSFakeIP},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			rootOptions = test.options
+			cfg := &config.Config{General: &config.General{}, DNS: &config.DNS{
+				Enable: test.dnsEnabled, EnhancedMode: constant.DNSFakeIP,
+				NameServer: []dns.NameServer{{Net: "https", Addr: "dns.example/dns-query"}},
+			}}
+			if err := applyRootOptions(cfg); err != nil {
+				t.Fatal(err)
+			}
+			if cfg.DNS.EnhancedMode != test.want || cfg.DNS.Enable != test.dnsEnabled || cfg.DNS.NameServer[0].Addr != "dns.example/dns-query" {
+				t.Fatalf("unexpected runtime DNS settings: %+v", cfg.DNS)
+			}
+		})
+	}
+}

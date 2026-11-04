@@ -90,7 +90,8 @@ internal data class RootDiagnosticEvidence(
 ) {
     companion object {
         private val items =
-            "clock boot-state tools boot-evidence auth-data package device grep processes directories runtime-state notifications " +
+            "clock boot-state tools boot-evidence auth-data package ota-properties clock-policy ota-errors " +
+                "device grep processes directories runtime-state proxy-state notifications " +
                 "ipv4 ipv6 routing-options capture-counters core-state core-state-previous iptables ip6tables nft selinux connectivity restore-diff baseline logs"
 
         private fun incompleteManifest(result: ShellResult): String {

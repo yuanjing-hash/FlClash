@@ -28,7 +28,7 @@ internal class RootPreviousSession(
                 ?: return false
         val stop = raw.lineSequence().singleOrNull { it.startsWith("stop:") }?.removePrefix("stop:") ?: return false
         if (stop !in setOf("active", "normal", "abnormal") || snapshot.state == TunState.STOPPING) return false
-        val abnormal = !checked && previous == session && stop != "normal"
+        val abnormal = !checked && previous == session && stop == "abnormal"
         checked = true
         runCatching {
             if (snapshot.state in setOf(TunState.STARTING, TunState.RUNNING, TunState.RECOVERING)) {

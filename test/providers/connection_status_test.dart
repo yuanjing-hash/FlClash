@@ -97,6 +97,44 @@ void main() {
     expect(container.read(provider).canProbe, isFalse);
   });
 
+  for (final mode in [RootTunMode.off, RootTunMode.vpn]) {
+    test('VPN finishes startup after a native runtime report from $mode', () {
+      final root = TestRootTunController(
+        snapshot: RootTunSnapshot.fromJson(
+          rootTunSnapshotJson(
+            enabled: false,
+            autostart: false,
+            state: 'disabled',
+          ),
+        ).copyWith(mode: mode),
+      );
+      final progress = _Progress();
+      final container = ProviderContainer(
+        overrides: [
+          rootTunControllerProvider.overrideWith(() => root),
+          setupActionProvider.overrideWith(() => progress),
+          appVisibleProvider.overrideWithBuild((_, _) => false),
+        ],
+      );
+      addTearDown(container.dispose);
+      final provider = connectionPhaseProvider(
+        platform: SupportPlatform.Android,
+      );
+      final subscription = container.listen(provider, (_, _) {});
+      addTearDown(subscription.close);
+      progress.show(RunProgress.starting);
+      expect(container.read(provider), ConnectionPhase.starting);
+      expect(container.read(provider).canProbe, isFalse);
+      final startedAt = DateTime.now().subtract(const Duration(seconds: 5));
+      progress.syncRunTime(startedAt);
+      expect(container.read(provider), ConnectionPhase.running);
+      expect(container.read(provider).canProbe, isTrue);
+      expect(container.read(runTimeProvider), greaterThanOrEqualTo(5_000));
+      progress.syncRunTime(null);
+      expect(container.read(provider), ConnectionPhase.stopped);
+    });
+  }
+
   test('VPN waits for the native runtime report after command acceptance', () {
     final root = TestRootTunController();
     final progress = _Progress();

@@ -98,6 +98,10 @@ class RootDiagnosticsTest {
         assertTrue(interrupted.manifest.contains("capture-counters not confirmed"))
         assertTrue(interrupted.manifest.contains("core-state not confirmed"))
         assertTrue(interrupted.manifest.contains("core-state-previous not confirmed"))
+        assertTrue(interrupted.manifest.contains("ota-properties not confirmed"))
+        assertTrue(interrupted.manifest.contains("clock-policy not confirmed"))
+        assertTrue(interrupted.manifest.contains("ota-errors not confirmed"))
+        assertTrue(interrupted.manifest.contains("proxy-state not confirmed"))
     }
 
     @Test

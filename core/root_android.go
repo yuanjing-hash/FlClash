@@ -25,6 +25,8 @@ import (
 	LC "github.com/metacubex/mihomo/listener/config"
 	"github.com/metacubex/mihomo/listener/sing_tun"
 	"github.com/metacubex/mihomo/tunnel"
+	"github.com/sagernet/netlink"
+	"golang.org/x/sys/unix"
 )
 
 type RootLaunch struct {
@@ -42,6 +44,7 @@ type RootLaunch struct {
 type rootTunRuntime struct {
 	mu         sync.Mutex
 	listener   *sing_tun.Listener
+	bypass     []*netlink.Rule
 	options    LC.Tun
 	ready      string
 	err        error
@@ -64,6 +67,22 @@ func (r *rootTunRuntime) update(options LC.Tun) error {
 		if r.err != nil {
 			return r.err
 		}
+		for _, policy := range rootBypassPolicy(options) {
+			rule := netlink.NewRule()
+			rule.Family = unix.AF_INET
+			if policy.family == 6 {
+				rule.Family = unix.AF_INET6
+			}
+			rule.Priority = policy.priority
+			rule.Goto = policy.target
+			rule.UIDRange = netlink.NewRuleUIDRange(policy.start, policy.end)
+			if err := netlink.RuleAdd(rule); err != nil {
+				r.err = fmt.Errorf("install IPv%d application bypass: %w", policy.family, err)
+				r.closeLocked()
+				return r.err
+			}
+			r.bypass = append(r.bypass, rule)
+		}
 	}
 	temporary := r.ready + ".tmp"
 	if err := os.WriteFile(temporary, []byte(strconv.Itoa(os.Getpid())+"\n"), 0600); err != nil {
@@ -82,6 +101,12 @@ func (r *rootTunRuntime) closeLocked() {
 		_ = r.listener.Close()
 		r.listener = nil
 	}
+	for _, rule := range r.bypass {
+		if err := netlink.RuleDel(rule); err != nil {
+			fmt.Fprintf(os.Stderr, "phase=root/remove-application-bypass: %v\n", err)
+		}
+	}
+	r.bypass = nil
 }
 
 func (r *rootTunRuntime) stop() {

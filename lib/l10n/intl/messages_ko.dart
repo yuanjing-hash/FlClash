@@ -1361,6 +1361,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "rootTunOff": MessageLookupByLibrary.simpleMessage("Off"),
     "rootTunOpenManager": MessageLookupByLibrary.simpleMessage("Open manager"),
+    "rootTunPerAppDnsDesc": MessageLookupByLibrary.simpleMessage(
+      "DNS가 켜져 있으면 앱별 접근 제어를 켠 Root TUN은 실제 IP DNS(redir-host)를 사용합니다. 여기에 저장한 DNS 모드는 VPN 및 앱별 제어를 끈 Root TUN에서 계속 사용됩니다. 앱별 설정을 변경한 후 프록시를 다시 시작하세요.",
+    ),
     "rootTunRecheck": MessageLookupByLibrary.simpleMessage("Check again"),
     "rootTunStale": MessageLookupByLibrary.simpleMessage(
       "상태 확인 중입니다. 다시 확인하거나 Root TUN을 중지할 수 있습니다.",
@@ -1378,6 +1381,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "rootTunStateStarting": MessageLookupByLibrary.simpleMessage("Starting"),
     "rootTunStateStopping": MessageLookupByLibrary.simpleMessage(
       "Stopping / cleaning up",
+    ),
+    "rootTunSystemProxyDesc": MessageLookupByLibrary.simpleMessage(
+      "Root TUN은 앱별 라우팅으로 트래픽을 처리하며 전역 HTTP 프록시를 설정하지 않습니다. 시스템 프록시와 제외 도메인은 VPN 모드에서만 사용됩니다.",
     ),
     "rootTunTimeout": MessageLookupByLibrary.simpleMessage(
       "The native response timed out; the command was not cancelled. Refresh state before toggling again.",

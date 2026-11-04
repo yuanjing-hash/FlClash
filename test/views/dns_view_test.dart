@@ -2,10 +2,12 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/features/form/form.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/models/root_tun.dart';
 import 'package:fl_clash/pages/editor.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/database.dart';
+import 'package:fl_clash/providers/root_tun.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/config/dns.dart';
 import 'package:fl_clash/widgets/widgets.dart';
@@ -15,6 +17,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
+import '../support/root_tun_controller.dart';
 
 const _profileId = 1;
 
@@ -22,15 +25,27 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late ProviderContainer container;
+  late TestRootTunController rootTun;
 
-  Future<void> pumpView(WidgetTester tester, {bool profile = false}) async {
+  Future<void> pumpView(
+    WidgetTester tester, {
+    bool profile = false,
+    bool perApp = false,
+    bool android = false,
+  }) async {
     tester.view.physicalSize = const Size(1200, 1000);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
 
+    rootTun = TestRootTunController();
     container = ProviderContainer(
       overrides: [
+        rootTunControllerProvider.overrideWith(() => rootTun),
+        vpnSettingProvider.overrideWithBuild(
+          (_, _) =>
+              VpnProps(accessControlProps: AccessControlProps(enable: perApp)),
+        ),
         profilesProvider.overrideWith(
           () => TestProfiles([
             const Profile(
@@ -52,7 +67,9 @@ void main() {
       UncontrolledProviderScope(
         container: container,
         child: TestApp(
-          child: profile ? DnsView.profile(_profileId) : const DnsView(),
+          child: profile
+              ? DnsView.profile(_profileId, isAndroid: android)
+              : DnsView(isAndroid: android),
         ),
       ),
     );
@@ -63,6 +80,39 @@ void main() {
 
   ProfileOverrides overrides() =>
       container.read(profilesProvider).getProfile(_profileId)!.overrides;
+
+  for (final profile in [false, true]) {
+    testWidgets(
+      'Root per-app DNS is explained without changing saved DNS ($profile)',
+      (tester) async {
+        await pumpView(tester, profile: profile, perApp: true, android: true);
+        rootTun.emit(
+          rootTun.initial.copyWith(
+            mode: RootTunMode.rootTun,
+            rootTunEnabled: true,
+          ),
+        );
+        await tester.pumpAndSettle();
+        final saved = profile ? overrides().dns : config().dns;
+        expect(
+          find.textContaining(currentAppLocalizations.rootTunPerAppDnsDesc),
+          findsOneWidget,
+        );
+        rootTun.emit(
+          rootTun.initial.copyWith(
+            mode: RootTunMode.vpn,
+            rootTunEnabled: false,
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          find.textContaining(currentAppLocalizations.rootTunPerAppDnsDesc),
+          findsNothing,
+        );
+        expect(profile ? overrides().dns : config().dns, saved);
+      },
+    );
+  }
 
   void setKeys(Set<DnsOverrideKey> keys) {
     container

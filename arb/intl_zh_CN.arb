@@ -941,6 +941,8 @@
   "allReferencedProxies": "全部被引用的代理",
   "allReferencedProxyProviders": "全部被引用的代理集",
   "rootTun": "Root TUN",
+  "rootTunSystemProxyDesc": "Root TUN 按应用路由接管流量，不设置全局 HTTP 代理。系统代理与排除域名仅用于 VPN 模式。",
+  "rootTunPerAppDnsDesc": "DNS 开启时，Root TUN 开启分应用访问控制时，实际使用真实 IP DNS（redir-host）。此处保存的 DNS 模式仍用于 VPN 和未开启分应用的 Root TUN。更改分应用设置后需重启代理。",
   "rootTunStateDisabled": "未启用",
   "rootTunStateAwaitingAuth": "等待授权",
   "rootTunStateStarting": "启动中",

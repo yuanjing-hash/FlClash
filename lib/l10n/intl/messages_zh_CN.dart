@@ -1254,6 +1254,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "rootTunOff": MessageLookupByLibrary.simpleMessage("关闭"),
     "rootTunOpenManager": MessageLookupByLibrary.simpleMessage("打开管理器"),
+    "rootTunPerAppDnsDesc": MessageLookupByLibrary.simpleMessage(
+      "DNS 开启时，Root TUN 开启分应用访问控制时，实际使用真实 IP DNS（redir-host）。此处保存的 DNS 模式仍用于 VPN 和未开启分应用的 Root TUN。更改分应用设置后需重启代理。",
+    ),
     "rootTunRecheck": MessageLookupByLibrary.simpleMessage("重新检测"),
     "rootTunStale": MessageLookupByLibrary.simpleMessage(
       "状态核对中，可重新检测或停止 Root TUN。",
@@ -1266,6 +1269,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "rootTunStateRunning": MessageLookupByLibrary.simpleMessage("运行中"),
     "rootTunStateStarting": MessageLookupByLibrary.simpleMessage("启动中"),
     "rootTunStateStopping": MessageLookupByLibrary.simpleMessage("停止中/清理中"),
+    "rootTunSystemProxyDesc": MessageLookupByLibrary.simpleMessage(
+      "Root TUN 按应用路由接管流量，不设置全局 HTTP 代理。系统代理与排除域名仅用于 VPN 模式。",
+    ),
     "rootTunTimeout": MessageLookupByLibrary.simpleMessage(
       "等待原生响应超时；命令未取消。请刷新状态，不要反复切换开关。",
     ),

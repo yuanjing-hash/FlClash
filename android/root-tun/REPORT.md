@@ -15,6 +15,10 @@
   PID、锁、代际和心跳均放在 R/run；PID 同时核对 `/proc/<pid>/stat` startTicks、boot_id，并排除 zombie。
 - 两个心跳文件采用 TDD §6.3 的 JSON 字段：schemaVersion、pid、startTicks、bootId、bootMs、sessionId；
   当前 sessionId 使用监督代际，期限使用 boot 单调秒。watchdog 每秒循环，supervisor 重建失联 watchdog。
+- 超过 5 秒的旧心跳先进入观察；仅在同一 PID/启动时间的心跳连续 10 秒没有推进时终止存活的守护进程。
+  观察间隔超过 3 秒会重置窗口，避免把计入 `/proc/uptime` 的休眠时间当成持续故障。进程已退出仍立即恢复。
+- 分离后的 worker 将自己的 PID 移出 App 的 cgroup，子进程继承该分组；无法写入的控制器记录到 launch.log。
+  HUP 不作为停止请求。前台服务允许系统重建并接回会话，退出界面或移除最近任务不停止 root 内核。
 - `owner.lock` 保持唯一网络/状态写者；watchdog 仅在接管时终止已核验的旧 supervisor、递增 generation 后写状态。
   心跳允许 5 秒间隔；core 的 PID、API、TUN 和网络规则健康时交给新 supervisor；失联后的前 24 秒
   保留拦截并重试健康检查，预算耗尽才清理并进入 `failed(CORE_RECOVERY_FAILED)`。adopt 共用该截止时间。
@@ -213,11 +217,11 @@ JVM 编译仍使用现有 `out/compile-native.py` 的依赖与桩，不能代替
 
 - root 启动时写入 `state/session`（boot_id + 单调时间），正常停止标记 `session-stop=normal`，
   错误停止标记 abnormal；运行会话标记经 status 和签名回报携带。看门狗 fail-open 后的 failed 状态保留会话证据。
-- App 在核对到活动会话后保存自己的会话标记。新进程首次获得同一 root 会话的有效回报，且没有正常 stop 记录时，
+- App 在核对到活动会话后保存自己的会话标记。新进程首次获得同一 root 会话的有效回报，且 root 会话明确标记 abnormal 时，
   发出 `LAST_SESSION_ABNORMAL_EXIT`，并放入 snapshot.warnings。回报仍为 stale、正在清理或缺少新格式标记时不提前报异常。
-  正常 stop/确认关闭、显式新启动、不同 root 会话不会误报；运行中的 root 会话照实显示 running，已清理的照实显示 failed/关闭。
+  清理最近任务后接回仍在运行的 root 会话、正常 stop/确认关闭、显式新启动和不同 root 会话不会误报；已清理的会话照实显示 failed/关闭。
   异常退出横幅不会覆盖 `CORE_RECOVERY_FAILED` 等真实失败原因。
-- JVM 覆盖强停后同会话重开、等待核对、仅发一次、正常停止、换会话及看门狗清理后的失败。
+- JVM 覆盖接回活动会话不误报、等待核对、仅发一次、正常停止、换会话及看门狗清理后的失败。
   runtime shell 覆盖会话字段、normal stop，以及 supervisor/core 同失联后 abnormal 标记与规则清理。
 
 ### 3. 撤权时序（#29 AC1）

@@ -3,8 +3,23 @@ package com.follow.clash.root
 import java.util.UUID
 
 internal object RootReconciliation {
+    fun requiresBootCleanup(status: ShellResult?): Boolean = status?.stdout?.lineSequence()?.any { it == "runtime-boot:previous" } == true
+
     fun initial(persisted: RootSnapshot?): RootSnapshot =
         persisted?.copy(epoch = UUID.randomUUID().toString(), seq = 0, stale = true) ?: RootSnapshot()
+
+    fun running(
+        cached: RootSnapshot,
+        installed: Boolean,
+        status: String,
+        now: Long = System.currentTimeMillis(),
+    ): RootSnapshot =
+        cached.copy(
+            state = TunState.RUNNING,
+            warnings = cached.warnings.filterNot { it == RootCode.CLEANUP_FAILED.name },
+            startedAt = cached.startedAt.takeUnless { installed } ?: now,
+            autostartEnabled = "autostart:yes" in status,
+        )
 
     fun missing(
         cached: RootSnapshot,
@@ -100,7 +115,6 @@ internal object RootReconciliation {
             lastErrorAt = if (code != null) System.currentTimeMillis() else null,
             warnings =
                 buildList {
-                    if (status != null && "restore-diff:yes" in status.stdout) add(RootCode.CLEANUP_FAILED.name)
                     if (status != null && "dns:hostname" in status.stdout) add(RootCode.PRIVATE_DNS_STRICT.name)
                     if (status != null && "always-on:yes" in status.stdout) add(RootCode.ALWAYS_ON_VPN_CONFLICT.name)
                 },

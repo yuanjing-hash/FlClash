@@ -370,6 +370,9 @@ abstract class OverrideSpec<K extends OverrideKey, M> {
 
   ConfigLabel? description(K key);
 
+  String pageDescription(AppLocalizations l, WidgetRef ref) =>
+      target.description(l);
+
   OverrideField<M> fieldOf(K key);
 
   /// Also resets the values of [keys], so a profile with no keys is untouched.
@@ -556,7 +559,7 @@ class OverrideView<K extends OverrideKey, M> extends ConsumerWidget {
         isEmpty: isEmpty,
         nullStatus: NullStatus(
           label: appLocalizations.nullTip(target.entries(appLocalizations)),
-          description: target.description(appLocalizations),
+          description: spec.pageDescription(appLocalizations, ref),
           illustration: spec.illustration,
           action: TonalButton(
             size: TonalButtonSize.bar,
@@ -613,7 +616,7 @@ class _OverrideList<K extends OverrideKey, M> extends ConsumerWidget {
         ),
         Padding(
           padding: EdgeInsets.only(top: 16.mAp(context)),
-          child: ListFooter(text: spec.target.description(appLocalizations)),
+          child: ListFooter(text: spec.pageDescription(appLocalizations, ref)),
         ),
       ],
     );

@@ -46,7 +46,6 @@ internal object RootLaunchConfig {
         val options = checkNotNull(state.vpnOptions) { "UI VPN options are unavailable" }
         val setup = checkNotNull(state.setupParams) { "UI Core setup parameters are unavailable" }
         val (include, exclude) = uids(options, appUid, resolve)
-        require(!options.systemProxy || options.port in 1..65535)
         val routes = options.routeAddress.ifEmpty { listOf("0.0.0.0/0", "::/0") } + listOf("198.18.0.0/30", "fdfe:dcba:9876::/126")
         val launch =
             mutableMapOf<String, Any>(
@@ -63,10 +62,11 @@ internal object RootLaunchConfig {
                 "ipv6.enabled" to if (options.ipv6) "1\n" else "0\n",
                 "allow-bypass" to if (options.allowBypass) "1\n" else "0\n",
                 "dns-hijacking" to if (options.dnsHijacking) "1\n" else "0\n",
+                "per-app-dns" to if (options.enable && options.accessControlProps.enable) "1\n" else "0\n",
                 "bypass.uids" to bypassUidRanges(include, exclude).joinToString("\n"),
                 "routes4" to routes.filterNot { ':' in it }.joinToString("\n", postfix = "\n"),
                 "routes6" to routes.filter { ':' in it }.joinToString("\n", postfix = "\n"),
-                "system-proxy" to if (options.systemProxy) "127.0.0.1:${options.port}" else "",
+                "system-proxy" to "",
                 "proxy-exclusions" to options.bypassDomain.joinToString(","),
             ),
         )
@@ -98,6 +98,7 @@ internal object RootLaunchConfig {
         options.routeAddress.forEach(String::toCIDR)
         return mapOf(
             "enable" to options.enable,
+            "perApp" to options.accessControlProps.enable,
             "ipv6" to options.ipv6,
             "dnsHijacking" to options.dnsHijacking,
             "stack" to options.stack,

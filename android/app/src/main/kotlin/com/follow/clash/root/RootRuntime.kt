@@ -46,8 +46,25 @@ internal class RootRuntime(
                 "elif [ ! -L $BASE/scripts/runtime.sh ] && [ -f $BASE/scripts/runtime.sh ]; then " +
                 "sh $BASE/scripts/runtime.sh status; " +
                 "else echo 'stopping CLEANUP_FAILED'; false; fi; result=\$?; " +
+                "previous_boot=\$(cat $BASE/run/boot-id 2>/dev/null || cat $BASE/state/owned.boot 2>/dev/null); " +
+                "current_boot=\$(cat /proc/sys/kernel/random/boot_id); " +
+                "if [ -n \"\$previous_boot\" ] && [ -n \"\$current_boot\" ] && [ \"\$previous_boot\" != \"\$current_boot\" ]; " +
+                "then echo runtime-boot:previous; fi; " +
                 "if $ownEntry; then echo autostart:yes; else echo autostart:no; fi; exit \$result",
         )
+
+    fun reconcileBoot(): ShellResult = stopResult("reconcile-boot")
+
+    fun repairSystemProxy(): ShellResult {
+        val repaired = stopResult("repair-proxy")
+        if (!repaired.success || repaired.stdout.lineSequence().none { it == "proxy-repair:verified" }) return repaired
+        return try {
+            installScripts()
+            repaired
+        } catch (error: Exception) {
+            ShellResult(1, repaired.stdout, "Persist proxy repair script failed: ${error.message}")
+        }
+    }
 
     fun attach(
         manager: String? = null,
@@ -80,7 +97,11 @@ internal class RootRuntime(
                     .Gson()
                     .fromJson(previous.stdout, VpnOptions::class.java)
             }.getOrNull()
-        if (previous.success && requested != null && requested == applied && attach(manager, authChannel())) return true
+        if (previous.success && requested != null && requested == applied && attach(manager, authChannel())) {
+            startPhase = "reattach-existing-core"
+            RootShell.note("Reattached existing Root Core without relaunch")
+            return true
+        }
         startPhase = "cleanup-previous-runtime"
         stopResult("cleanup").requireSuccess("Clean previous root runtime")
         if (!allowed()) return false
@@ -215,6 +236,7 @@ internal class RootRuntime(
                 context.assets.open("root-tun/runtime.sh").use { input -> script.outputStream().use { input.copyTo(it) } }
                 shell.root(
                     "if [ ! -e $BASE ] && [ ! -L $BASE ]; then exit 0; fi; " +
+                        "ROOT_PROXY_CLASSPATH=${RootShell.quote(context.applicationInfo.sourceDir)} " +
                         "exec sh ${RootShell.quote(script.path)} $operation",
                     15_000,
                 )
@@ -328,17 +350,23 @@ internal class RootRuntime(
                 .open("root-tun/diagnostics.sh")
                 .bufferedReader()
                 .use { it.readText() }
+        val otaCollector =
+            context.assets
+                .open("root-tun/ota-diagnostics.sh")
+                .bufferedReader()
+                .use { it.readText() }
         val script =
             (
                 "AUTH_SOURCE=${RootShell.quote(authorization)}\n" +
+                    "OTA_SOURCE=${RootShell.quote(otaCollector)}\n" +
                     "export APP_UID=${context.applicationInfo.uid} ROOT_MANAGER=${RootShell.quote(manager)}\n" + collector
             ).toByteArray()
         val diagnosticShell = RootShell(4 * 1024 * 1024)
         val result =
             if (privileged) {
-                diagnosticShell.root("sh", 15_000, script)
+                diagnosticShell.root("sh", 18_000, script)
             } else {
-                diagnosticShell.execute(listOf("sh", "-c", "export TMPDIR=${RootShell.quote(context.cacheDir.path)}; sh"), 15_000, script)
+                diagnosticShell.execute(listOf("sh", "-c", "export TMPDIR=${RootShell.quote(context.cacheDir.path)}; sh"), 18_000, script)
             }
         return RootDiagnosticEvidence.parse(result)
     }

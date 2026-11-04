@@ -941,6 +941,8 @@
   "allReferencedProxies": "Все используемые прокси",
   "allReferencedProxyProviders": "Все используемые провайдеры прокси",
   "rootTun": "Root TUN",
+  "rootTunSystemProxyDesc": "Root TUN маршрутизирует трафик по приложениям, не устанавливая глобальный HTTP-прокси. Системный прокси и исключения доменов действуют только в режиме VPN.",
+  "rootTunPerAppDnsDesc": "Если DNS включён, при управлении доступом по приложениям Root TUN использует DNS с реальными IP (redir-host). Сохранённый здесь режим DNS остаётся для VPN и Root TUN без такого управления. После изменения настроек приложений перезапустите прокси.",
   "rootTunStateDisabled": "Disabled",
   "rootTunStateAwaitingAuth": "Awaiting authorization",
   "rootTunStateStarting": "Starting",

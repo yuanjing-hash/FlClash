@@ -1380,6 +1380,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "rootTunOff": MessageLookupByLibrary.simpleMessage("Off"),
     "rootTunOpenManager": MessageLookupByLibrary.simpleMessage("Open manager"),
+    "rootTunPerAppDnsDesc": MessageLookupByLibrary.simpleMessage(
+      "DNS が有効な場合、Root TUN でアプリ別アクセス制御を有効にすると、実際には実 IP DNS（redir-host）を使用します。ここに保存した DNS モードは VPN とアプリ別制御のない Root TUN で使用されます。アプリ別設定の変更後はプロキシを再起動してください。",
+    ),
     "rootTunRecheck": MessageLookupByLibrary.simpleMessage("Check again"),
     "rootTunStale": MessageLookupByLibrary.simpleMessage(
       "状態を確認中です。再確認するか、Root TUN を停止できます。",
@@ -1397,6 +1400,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "rootTunStateStarting": MessageLookupByLibrary.simpleMessage("Starting"),
     "rootTunStateStopping": MessageLookupByLibrary.simpleMessage(
       "Stopping / cleaning up",
+    ),
+    "rootTunSystemProxyDesc": MessageLookupByLibrary.simpleMessage(
+      "Root TUN はアプリごとのルーティングで通信を処理し、グローバル HTTP プロキシを設定しません。システムプロキシと除外ドメインは VPN モードでのみ使用します。",
     ),
     "rootTunTimeout": MessageLookupByLibrary.simpleMessage(
       "The native response timed out; the command was not cancelled. Refresh state before toggling again.",

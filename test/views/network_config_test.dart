@@ -1,9 +1,11 @@
 import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/models/root_tun.dart';
 import 'package:fl_clash/providers/app.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/database.dart';
+import 'package:fl_clash/providers/root_tun.dart';
 import 'package:fl_clash/state.dart';
 import 'package:fl_clash/views/config/network.dart';
 import 'package:fl_clash/views/config/tun.dart';
@@ -13,6 +15,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
+import '../support/root_tun_controller.dart';
 
 class _ToggleCase {
   final String name;
@@ -77,10 +80,15 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late ProviderContainer container;
+  late TestRootTunController rootTun;
 
   setUp(() {
+    rootTun = TestRootTunController();
     container = ProviderContainer(
-      overrides: [profilesProvider.overrideWith(TestProfiles.new)],
+      overrides: [
+        profilesProvider.overrideWith(TestProfiles.new),
+        rootTunControllerProvider.overrideWith(() => rootTun),
+      ],
     );
     globalState.container = container;
     container.read(viewSizeProvider.notifier).value = const Size(1200, 1000);
@@ -122,6 +130,36 @@ void main() {
       });
     }
   });
+
+  testWidgets(
+    'Root TUN exposes routing settings and keeps HTTP proxy settings scoped to VPN',
+    (tester) async {
+      await pumpItem(tester, const VpnSections());
+      expect(find.byType(VpnSystemProxyItem), findsOneWidget);
+      expect(find.byType(BypassDomainItem), findsOneWidget);
+      final saved = container.read(vpnSettingProvider).systemProxy;
+      rootTun.emit(
+        rootTun.initial.copyWith(
+          mode: RootTunMode.rootTun,
+          rootTunEnabled: true,
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.byType(VpnSystemProxyItem), findsNothing);
+      expect(find.byType(BypassDomainItem), findsNothing);
+      expect(find.byType(AllowBypassItem), findsOneWidget);
+      expect(find.byType(DNSHijackingItem), findsOneWidget);
+      expect(
+        find.text(currentAppLocalizations.rootTunSystemProxyDesc),
+        findsOneWidget,
+      );
+      expect(container.read(vpnSettingProvider).systemProxy, saved);
+      rootTun.emit(rootTun.initial.copyWith(mode: RootTunMode.vpn));
+      await tester.pumpAndSettle();
+      expect(find.byType(VpnSystemProxyItem), findsOneWidget);
+      expect(container.read(vpnSettingProvider).systemProxy, saved);
+    },
+  );
 
   group('option pickers', () {
     testWidgets('the stack picker writes the chosen tun stack', (tester) async {

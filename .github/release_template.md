@@ -20,8 +20,8 @@ Verify downloads with [SHA256SUMS](https://github.com/yuanjing-hash/FlClash/rele
         <tr>
         <td>Android</td>
             <td>
-                <a href="https://github.com/yuanjing-hash/FlClash/releases/download/vVERSION/FlClash-VERSION-android-arm64-v8a.apk"><img src="https://img.shields.io/badge/APK-ARMv8-168039.svg?logo=android"></a><br>
-                <a href="https://github.com/yuanjing-hash/FlClash/releases/download/vVERSION/FlClash-VERSION-android-x86_64.apk"><img src="https://img.shields.io/badge/APK-x64-96ed89.svg?logo=android"></a>
+                <a href="https://github.com/yuanjing-hash/FlClash/releases/download/vVERSION/FlClash-TUN-VERSION-android-arm64-v8a.apk"><img src="https://img.shields.io/badge/APK-ARMv8-168039.svg?logo=android"></a><br>
+                <a href="https://github.com/yuanjing-hash/FlClash/releases/download/vVERSION/FlClash-TUN-VERSION-android-x86_64.apk"><img src="https://img.shields.io/badge/APK-x64-96ed89.svg?logo=android"></a>
             </td>
         </tr>
     </tbody>
