@@ -215,6 +215,12 @@ jobs:
     name: Android unit tests
     runs-on: ubuntu-latest
     steps:
+      - name: Free runner space for Android native builds
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/share/boost /opt/ghc /usr/local/.ghcup
+          df -h /
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -340,6 +346,12 @@ jobs:
       stable: ${{ steps.version.outputs.stable }}
       signed: ${{ steps.signing.outputs.signed }}
     steps:
+      - name: Free runner space for Android native builds
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/share/boost /opt/ghc /usr/local/.ghcup
+          df -h /
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -401,13 +413,17 @@ jobs:
           STORE_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.STORE_PASSWORD || '' }}
           KEY_PASSWORD: ${{ github.event_name != 'pull_request' && secrets.KEY_PASSWORD || '' }}
         run: |
+          set -o pipefail
           if [[ -n "$KEYSTORE" && -n "$KEY_ALIAS" && -n "$STORE_PASSWORD" && -n "$KEY_PASSWORD" ]]; then
             printf '%s' "$KEYSTORE" | base64 --decode > android/app/keystore.jks
+            printf '\n' >> android/local.properties
             {
               printf 'keyAlias=%s\n' "$KEY_ALIAS"
               printf 'storePassword=%s\n' "$STORE_PASSWORD"
               printf 'keyPassword=%s\n' "$KEY_PASSWORD"
             } >> android/local.properties
+            certificate=$(keytool -exportcert -alias "$KEY_ALIAS" -keystore android/app/keystore.jks -storepass:env STORE_PASSWORD | sha256sum | cut -d ' ' -f 1)
+            echo "certificate_sha256=$certificate" >> "$GITHUB_OUTPUT"
             echo 'signed=true' >> "$GITHUB_OUTPUT"
           else
             if [[ "$IS_STABLE" == true ]]; then
@@ -432,6 +448,23 @@ jobs:
           ANDROID_NDK_HOME: ${{ steps.build-ndk.outputs.ndk-path }}
         # armeabi-v7a is not shipped; Root TUN targets 64-bit devices.
         run: dart setup.dart android --arch arm64,amd64 ${{ env.IS_STABLE == 'true' && '--env stable' || '' }} -v
+
+      - name: Verify APK signing identity
+        if: steps.signing.outputs.signed == 'true'
+        env:
+          EXPECTED_CERTIFICATE: ${{ steps.signing.outputs.certificate_sha256 }}
+        run: |
+          test -n "$EXPECTED_CERTIFICATE"
+          signer=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -n 1)
+          test -x "$signer"
+          for apk in dist/*.apk; do
+            signature=$("$signer" verify --print-certs "$apk")
+            actual=$(printf '%s\n' "$signature" | sed -n 's/.*certificate SHA-256 digest: //p' | head -n 1)
+            if [[ "$actual" != "$EXPECTED_CERTIFICATE" ]]; then
+              echo "Signing certificate mismatch: $apk" >&2
+              exit 1
+            fi
+          done
 
       - name: Clean Android signing files
         if: always()
