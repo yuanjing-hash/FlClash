@@ -64,18 +64,13 @@ ConfigToggleItem _networkToggle({
   );
 }
 
-class VPNItem extends ConsumerWidget {
+class VPNItem extends StatelessWidget {
   const VPNItem({super.key});
 
   @override
-  Widget build(BuildContext context, ref) {
-    final rootMode = ref.watch(
-      rootTunControllerProvider.select(
-        (state) => state.snapshot?.mode == RootTunMode.rootTun,
-      ),
-    );
+  Widget build(BuildContext context) {
     return _vpnToggle(
-      title: (l) => rootMode ? l.rootTun : 'VPN',
+      title: (l) => 'VPN',
       select: (state) => state.enable,
       update: (state, value) => state.copyWith(enable: value),
     );
@@ -521,12 +516,11 @@ class VpnSections extends ConsumerWidget {
     );
     return Column(
       children: [
-        generateSection(
-          items: const [VPNItem()],
-          footer: rootMode
-              ? appLocalizations.rootTunSystemProxyDesc
-              : appLocalizations.vpnEnableDesc,
-        ),
+        if (!rootMode)
+          generateSection(
+            items: const [VPNItem()],
+            footer: appLocalizations.vpnEnableDesc,
+          ),
         generateSection(
           title: rootMode ? appLocalizations.rootTun : 'VPN',
           items: [
@@ -539,6 +533,7 @@ class VpnSections extends ConsumerWidget {
             const DNSHijackingItem(),
           ],
           footer: [
+            if (rootMode) appLocalizations.rootTunSystemProxyDesc,
             if (!rootMode && authenticationEnable)
               appLocalizations.authenticationSystemProxyDesc,
             if (!rootMode) appLocalizations.bypassDomainDesc,

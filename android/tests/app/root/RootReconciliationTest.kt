@@ -151,6 +151,37 @@ class RootReconciliationTest {
     }
 
     @Test
+    fun verifiedStopClearsCleanupWarningAndPreservesSelectedModeUntilDisabled() {
+        val previous =
+            cached.copy(
+                state = TunState.STOPPING,
+                rootTunEnabled = true,
+                mode = "rootTun",
+                autostartEnabled = true,
+                warnings = listOf(RootCode.CLEANUP_FAILED.name),
+                lastErrorCode = RootCode.CLEANUP_FAILED.name,
+                lastErrorAt = 123L,
+                startedAt = 100L,
+                stale = true,
+            )
+        val stopped = RootReconciliation.stopped(previous, disabled = false, switchedToVpn = false)
+        assertEquals(TunState.DISABLED, stopped.state)
+        assertEquals(emptyList<String>(), stopped.warnings)
+        assertNull(stopped.lastErrorCode)
+        assertNull(stopped.lastErrorAt)
+        assertNull(stopped.startedAt)
+        assertFalse(stopped.stale)
+        assertTrue(stopped.rootTunEnabled)
+        assertTrue(stopped.autostartEnabled)
+        assertEquals("rootTun", stopped.mode)
+        val disabled = RootReconciliation.stopped(previous, disabled = true, switchedToVpn = false)
+        assertFalse(disabled.rootTunEnabled)
+        assertFalse(disabled.autostartEnabled)
+        assertEquals("off", disabled.mode)
+        assertEquals("vpn", RootReconciliation.stopped(previous, disabled = true, switchedToVpn = true).mode)
+    }
+
+    @Test
     fun rootStoppingRevocationIsNotCleanupFailureAndAutostartFailureSurvivesMissingAppGrant() {
         val missing = RootStatus("kernelsu", "notGranted")
         val stopping = RootReconciliation.checked(cached, missing, ShellResult(0, "stopping ROOT_PERMISSION_REVOKED\nbootMs:1000", ""))

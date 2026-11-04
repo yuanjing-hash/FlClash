@@ -29,6 +29,10 @@ func TestRootDiagnosticReportsActualGlobalSelectionAndKeepsCredentialsPrivate(t 
 		t.Fatal(err)
 	}
 	cfg.Controller.Secret = "never-export-controller-secret"
+	cfg.General.Tun, err = rootTunConfig(RootOptions{Enable: true, PerApp: true, Stack: "mips", ExcludeUID: []uint32{10314}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	withCurrentConfig(t, cfg)
 	tunnel.UpdateProxies(cfg.Proxies, cfg.Providers)
 	t.Cleanup(func() { tunnel.UpdateProxies(nil, nil) })
@@ -45,6 +49,10 @@ func TestRootDiagnosticReportsActualGlobalSelectionAndKeepsCredentialsPrivate(t 
 	}
 	if state["ntpEnabled"] != true || state["ntpWriteToSystem"] != false {
 		t.Fatal("live system time policy lost", state)
+	}
+	if state["tunEnabled"] != true || state["tunDevice"] != "flcrtun0" ||
+		!reflect.DeepEqual(state["excludeUID"], []uint32{10314}) {
+		t.Fatal("actual application capture policy lost", state)
 	}
 	data, err := json.Marshal(state)
 	if err != nil || strings.Contains(string(data), "never-export") {

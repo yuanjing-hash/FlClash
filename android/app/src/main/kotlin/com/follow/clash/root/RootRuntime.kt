@@ -97,7 +97,12 @@ internal class RootRuntime(
                     .Gson()
                     .fromJson(previous.stdout, VpnOptions::class.java)
             }.getOrNull()
-        if (previous.success && requested != null && requested == applied && attach(manager, authChannel())) {
+        if (previous.success &&
+            requested != null &&
+            requested == applied &&
+            installedRuntimeIsCurrent() &&
+            attach(manager, authChannel())
+        ) {
             startPhase = "reattach-existing-core"
             RootShell.note("Reattached existing Root Core without relaunch")
             return true
@@ -307,8 +312,6 @@ internal class RootRuntime(
         return result.success
     }
 
-    fun restoreDiffExists(): Boolean = shell.root("[ -s $BASE/logs/restore-diff.txt ]").success
-
     fun healthy(status: ShellResult = status()): Boolean {
         if (!readyForDns(status)) return false
         return apiHealthy()
@@ -383,13 +386,10 @@ internal class RootRuntime(
                     "chmod 700 $BASE $BASE/bin $BASE/config $BASE/config/assets $BASE/scripts $BASE/state $BASE/run $BASE/logs $BASE/tmp",
             )
         setup.requireSuccess("Create root runtime directories")
-        val identity = "${context.packageName}:${context.packageManager.getPackageInfo(
-            context.packageName,
-            0,
-        ).lastUpdateTime}:${library.length()}"
+        val identity = runtimeIdentity(library)
         val cached =
             shell.root(
-                "[ \"\$(cat $BASE/config/runtime.apk 2>/dev/null)\" = ${RootShell.quote(identity)} ] && " +
+                "${runtimeIdentityCheck(identity)} && " +
                     "[ -x $BASE/bin/mihomo ] && [ -f $BASE/bin/proxy-helper.jar ] && " +
                     "sha256sum -c $BASE/config/runtime.sha256 >/dev/null",
             )
@@ -405,6 +405,20 @@ internal class RootRuntime(
                 "sha256sum $BASE/bin/mihomo $BASE/bin/proxy-helper.jar >$BASE/config/runtime.sha256",
             ).requireSuccess("Record runtime integrity")
         write("config/runtime.apk", identity.toByteArray())
+    }
+
+    private fun runtimeIdentity(library: File): String =
+        "${context.packageName}:${context.packageManager.getPackageInfo(
+            context.packageName,
+            0,
+        ).lastUpdateTime}:${library.length()}"
+
+    private fun runtimeIdentityCheck(identity: String): String =
+        "[ \"\$(cat $BASE/config/runtime.apk 2>/dev/null)\" = ${RootShell.quote(identity)} ]"
+
+    private fun installedRuntimeIsCurrent(): Boolean {
+        val library = File(context.applicationInfo.nativeLibraryDir, "libroot_mihomo.so")
+        return library.isFile && shell.root(runtimeIdentityCheck(runtimeIdentity(library)), 1_000).success
     }
 
     private fun installProxyHelper() {

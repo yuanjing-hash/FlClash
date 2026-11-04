@@ -2,6 +2,7 @@ package com.follow.clash.root
 
 import android.content.Context
 import android.os.Build
+import com.follow.clash.BuildConfig
 import com.google.gson.GsonBuilder
 import java.io.File
 import java.util.zip.ZipEntry
@@ -25,7 +26,7 @@ internal object RootDiagnostics {
             "${Build.MANUFACTURER} ${Build.MODEL}\n" +
                 "Android ${Build.VERSION.RELEASE} SDK ${Build.VERSION.SDK_INT}\n" +
                 "incremental=${Build.VERSION.INCREMENTAL}\nsecurity_patch=${Build.VERSION.SECURITY_PATCH}\n" +
-                "package=${context.packageName}\n" + evidence.device,
+                "package=${context.packageName}\nversion=${BuildConfig.VERSION_NAME}+${BuildConfig.VERSION_CODE}\n" + evidence.device,
             snapshot,
             logs,
             evidence,

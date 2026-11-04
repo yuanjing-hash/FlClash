@@ -74,7 +74,7 @@ collect notifications 2 sh -c 'dumpsys notification | grep -i -B2 -A6 flclash-ro
 batch
 collect ipv4 2 sh -c 'ip -4 rule show; ip -4 route show table all; ip link show; ip addr show'
 collect ipv6 2 sh -c 'ip -6 rule show; ip -6 route show table all'
-collect routing-options 2 sh -c 'for f in vpn-options.json tun.enabled ipv6.enabled dns-hijacking allow-bypass bypass.uids; do echo "[$f]"; cat "$R/config/$f"; done; for key in private_dns_mode private_dns_default_mode private_dns_specifier; do echo "$key=$(settings get global "$key")"; done'
+collect routing-options 2 sh -c 'for f in vpn-options.json tun.enabled ipv6.enabled dns-hijacking allow-bypass per-app-dns bypass.uids runtime.apk runtime.sha256; do echo "[$f]"; cat "$R/config/$f"; echo; done; for key in private_dns_mode private_dns_default_mode private_dns_specifier; do echo "$key=$(settings get global "$key")"; done'
 collect capture-counters 2 sh -c 'iptables -w 1 -nvxL FCR_OUTPUT; ip6tables -w 1 -nvxL FCR_OUTPUT'
 collect core-state 2 cat "$R/logs/network-state.json"
 collect core-state-previous 2 cat "$R/logs/network-state.previous.json"

@@ -136,8 +136,10 @@ void main() {
     (tester) async {
       await pumpItem(tester, const VpnSections());
       expect(find.byType(VpnSystemProxyItem), findsOneWidget);
+      expect(find.byType(VPNItem), findsOneWidget);
       expect(find.byType(BypassDomainItem), findsOneWidget);
       final saved = container.read(vpnSettingProvider).systemProxy;
+      final vpnEnabled = container.read(vpnSettingProvider).enable;
       rootTun.emit(
         rootTun.initial.copyWith(
           mode: RootTunMode.rootTun,
@@ -146,18 +148,22 @@ void main() {
       );
       await tester.pumpAndSettle();
       expect(find.byType(VpnSystemProxyItem), findsNothing);
+      expect(find.byType(VPNItem), findsNothing);
       expect(find.byType(BypassDomainItem), findsNothing);
       expect(find.byType(AllowBypassItem), findsOneWidget);
       expect(find.byType(DNSHijackingItem), findsOneWidget);
       expect(
-        find.text(currentAppLocalizations.rootTunSystemProxyDesc),
+        find.textContaining(currentAppLocalizations.rootTunSystemProxyDesc),
         findsOneWidget,
       );
       expect(container.read(vpnSettingProvider).systemProxy, saved);
+      expect(container.read(vpnSettingProvider).enable, vpnEnabled);
       rootTun.emit(rootTun.initial.copyWith(mode: RootTunMode.vpn));
       await tester.pumpAndSettle();
       expect(find.byType(VpnSystemProxyItem), findsOneWidget);
+      expect(find.byType(VPNItem), findsOneWidget);
       expect(container.read(vpnSettingProvider).systemProxy, saved);
+      expect(container.read(vpnSettingProvider).enable, vpnEnabled);
     },
   );
 
