@@ -2,6 +2,34 @@
   "schemaVersion": 2,
   "versions": [
     {
+      "version": "1.1.4",
+      "tag": "v1.1.4",
+      "date": "2026-11-04",
+      "prerelease": false,
+      "groups": [
+        {
+          "type": "fix",
+          "entries": [
+            {
+              "id": "b9b15d0",
+              "scope": "android",
+              "text": "Correct Root TUN application bypass, restore owned proxy settings, and reconcile state after reboot"
+            },
+            {
+              "id": "c3f4341",
+              "scope": "android",
+              "text": "Report VPN startup completion and retain TUN session time"
+            },
+            {
+              "id": "d80c5dd",
+              "scope": "android",
+              "text": "Preserve Root TUN across sleep and restore notification speed"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.0.0",
       "tag": "v1.0.0",
       "date": "2026-11-03",

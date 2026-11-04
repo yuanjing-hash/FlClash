@@ -1,5 +1,13 @@
 # Changelog
 
+## v1.1.4 (2026-11-04)
+
+**Bug Fixes**
+
+- **android** Correct Root TUN application bypass, restore owned proxy settings, and reconcile state after reboot (b9b15d0)
+- **android** Report VPN startup completion and retain TUN session time (c3f4341)
+- **android** Preserve Root TUN across sleep and restore notification speed (d80c5dd)
+
 ## v1.0.0 (2026-11-03)
 
 **Features**
