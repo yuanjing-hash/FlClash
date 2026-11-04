@@ -894,7 +894,7 @@ internal class RootTunController(
             }
         }
         listener?.let { sink -> deliver(sink, event) }
-        RootTunService.update(context, snapshot)
+        RootTunService.update()
         notifyRunTimeChanged()
     }
 

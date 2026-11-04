@@ -284,7 +284,7 @@ class RootTunControllerTest {
     }
 
     @Test
-    fun processReopenRequiresMatchingRootSessionAndVerifiedNetworkBeforeAbnormalBanner() {
+    fun processReopenWarnsOnlyWhenTheMatchingRootSessionActuallyFailed() {
         val directory =
             java.nio.file.Files
                 .createTempDirectory("root-session")
@@ -296,7 +296,7 @@ class RootTunControllerTest {
             assertFalse(RootPreviousSession(marker).observe(raw, running))
             val reopened = RootPreviousSession(marker)
             assertFalse(reopened.observe(raw, running.copy(stale = true)))
-            assertTrue(reopened.observe(raw, running))
+            assertFalse(reopened.observe(raw, running))
             assertFalse(reopened.observe(raw, running))
             val failed = running.copy(state = TunState.FAILED, lastErrorCode = RootCode.CORE_RECOVERY_FAILED.name)
             assertTrue(RootPreviousSession(marker).observe(raw.replace("stop:active", "stop:abnormal"), failed))

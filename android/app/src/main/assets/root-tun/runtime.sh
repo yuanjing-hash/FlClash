@@ -155,14 +155,52 @@ fresh() {
     [ "$beat_age" -ge 0 ] && [ "$beat_age" -le 5 ]
 }
 
+stalled() {
+    suspicion=$RUN/$1.suspect
+    if fresh "$1"; then rm -f "$suspicion"; return 1; fi
+    alive "$RUN/$1.pid" || { rm -f "$suspicion"; return 0; }
+    observed_now=$(boot_seconds)
+    observed_signature=$(cat "$RUN/$1.pid" "$RUN/$1.heartbeat" 2>/dev/null | cksum)
+    observed_since=$observed_now
+    if [ -f "$suspicion" ]; then
+        read -r previous_check previous_since previous_signature < "$suspicion"
+        case "$previous_check:$previous_since" in
+            *[!0-9:]*|:*|*:) ;;
+            *)
+                # Suspend advances /proc/uptime while both workers are asleep.
+                if [ "$observed_signature" = "$previous_signature" ] &&
+                    [ "$observed_now" -ge "$previous_check" ] && [ $((observed_now - previous_check)) -le 3 ]; then
+                    observed_since=$previous_since
+                fi
+                ;;
+        esac
+    fi
+    printf '%s %s %s\n' "$observed_now" "$observed_since" "$observed_signature" > "$suspicion.$$"
+    mv "$suspicion.$$" "$suspicion"
+    [ $((observed_now - observed_since)) -ge 10 ]
+}
+
+detach_cgroups() {
+    for root_cgroup in /acct/cgroup.procs /dev/cg2_bpf/cgroup.procs /sys/fs/cgroup/cgroup.procs /dev/memcg/apps/cgroup.procs; do
+        [ -f "$root_cgroup" ] || continue
+        if ! { printf '%s\n' "$$" >> "$root_cgroup"; } 2>/dev/null; then
+            runtime_log launch "cgroup detach failed path=$root_cgroup pid=$$"
+        fi
+    done
+    runtime_log launch "detached role=$1 pid=$$ cgroups=$(cat /proc/$$/cgroup 2>/dev/null | tr '\n' ';')"
+}
+
 detach() {
     rotate_log launch
     nohup setsid sh "$R/scripts/runtime.sh" spawn "$@" </dev/null >>"$R/logs/launch.log" 2>&1 &
 }
 
 ensure_watchdog() {
-    fresh watchdog && return 0
-    if alive "$RUN/watchdog.pid"; then kill -KILL "$recorded_pid"; fi
+    stalled watchdog || return 0
+    if alive "$RUN/watchdog.pid"; then
+        runtime_log supervisor "watchdog heartbeat stopped advancing pid=$recorded_pid"
+        kill -KILL "$recorded_pid"
+    fi
     detach watchdog
 }
 
@@ -517,7 +555,8 @@ supervise() {
         unlock owner
         return 1
     fi
-    trap 'touch "$RUN/stop"' TERM INT HUP
+    trap 'touch "$RUN/stop"' TERM INT
+    trap '' HUP
     rm -f "$RUN/healthy"
     adopt_ready=0
     if [ "${1:-}" = adopt ]; then
@@ -965,7 +1004,8 @@ authorization_interval() {
 watchdog() {
     lock watchdog || return 0
     trap 'stop_probes; rm -f "$RUN/watchdog.pid" "$RUN/watchdog.heartbeat"; unlock watchdog' EXIT
-    trap 'exit 0' TERM INT HUP
+    trap 'exit 0' TERM INT
+    trap '' HUP
     printf '%s\n' "$IDENTITY" > "$RUN/watchdog.pid"
     generation=$(cat "$RUN/generation" 2>/dev/null) || generation=0
     runtime_log watchdog 'watchdog started'
@@ -1021,9 +1061,12 @@ watchdog() {
                 disabled*|failed*) sleep 1; continue ;;
             esac
         fi
-        if ! fresh supervisor && lock control; then
-            if fresh supervisor; then unlock control; continue; fi
-            if alive "$RUN/supervisor.pid"; then kill -KILL "$recorded_pid"; fi
+        if stalled supervisor && lock control; then
+            if ! stalled supervisor; then unlock control; continue; fi
+            if alive "$RUN/supervisor.pid"; then
+                runtime_log watchdog "supervisor heartbeat stopped advancing pid=$recorded_pid"
+                kill -KILL "$recorded_pid"
+            fi
             [ "$orphan_since" -ne 0 ] || orphan_since=$(boot_seconds)
             if claim_owner; then
                 if [ -f "$RUN/stop" ]; then
@@ -1142,7 +1185,7 @@ case "${1:-}" in
     settings) write_settings ;;
     start)
         if ! wait_control; then exit 1; fi
-        if fresh supervisor; then ensure_watchdog; unlock control; exit 0; fi
+        if alive "$RUN/supervisor.pid" && ! stalled supervisor; then ensure_watchdog; unlock control; exit 0; fi
         printf '%s\n' "$BOOT" > "$RUN/boot-id.tmp" && mv "$RUN/boot-id.tmp" "$RUN/boot-id"
         printf '%s-%s\n' "$BOOT" "$(boot_ms)" > "$STATE/session"
         printf '%s\n' active > "$STATE/session-stop"
@@ -1163,6 +1206,8 @@ case "${1:-}" in
         ;;
     spawn)
         shift
+        # A new session still inherits the app's cgroups on some root managers.
+        if [ -d /system/bin ]; then detach_cgroups "$1"; fi
         nohup sh "$R/scripts/runtime.sh" "$@" </dev/null >>"$R/logs/launch.log" 2>&1 &
         ;;
     supervise) supervise "${2:-}" ;;
@@ -1183,7 +1228,7 @@ case "${1:-}" in
         if [ -s "$R/logs/restore-diff.txt" ]; then echo restore-diff:yes; fi
         always_on=$(settings get secure always_on_vpn_app 2>/dev/null)
         if [ "$always_on" = "$(cat "$R/config/app.package" 2>/dev/null)" ]; then echo always-on:yes; fi
-        fresh supervisor || exit 1
+        alive "$RUN/supervisor.pid" || exit 1
         core_healthy && network_intact || exit 1
         ;;
     healthy)

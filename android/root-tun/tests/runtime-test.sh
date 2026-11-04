@@ -85,6 +85,20 @@ sleep 0.2
 [ "$watchdog" = "$(pid_of watchdog)" ]
 [ "$core" = "$(pid_of core)" ]
 echo 'PASS singleton start'
+kill -HUP "$supervisor" "$watchdog"
+sleep 1
+[ "$supervisor" = "$(pid_of supervisor)" ] && [ "$watchdog" = "$(pid_of watchdog)" ]
+[ "$core" = "$(pid_of core)" ] && [ ! -f "$R/run/stop" ] && ready
+echo 'PASS closing the app shell session is not a root stop request'
+kill -STOP "$supervisor" "$watchdog"
+sleep 8
+kill -CONT "$watchdog"
+sleep 1
+kill -CONT "$supervisor"
+sleep 2
+[ "$supervisor" = "$(pid_of supervisor)" ] && [ "$watchdog" = "$(pid_of watchdog)" ]
+[ "$core" = "$(pid_of core)" ] && [ ! -f "$R/run/stop" ] && ready
+echo 'PASS waking the watchdog before the supervisor does not kill the sleeping root session'
 touch "$FAKE_NET/slow-settings"
 wait_for test -f "$FAKE_NET/settings-delayed"
 sleep 7
