@@ -6,7 +6,6 @@ import android.net.ProxyInfo;
 import android.net.Uri;
 import android.system.Os;
 import android.util.Xml;
-import android.provider.Settings;
 
 import com.follow.clash.models.SharedState;
 import com.google.gson.Gson;
@@ -123,28 +122,6 @@ public final class RootProxyMain {
         }
     }
 
-    private static RootProxyState.Value stored(Context context) {
-        android.content.ContentResolver resolver = context.getContentResolver();
-        String host = Settings.Global.getString(resolver, "global_http_proxy_host");
-        String pac = Settings.Global.getString(resolver, "global_proxy_pac_url");
-        int port = Settings.Global.getInt(resolver, "global_http_proxy_port", 0);
-        String exclusions = Settings.Global.getString(resolver, "global_http_proxy_exclusion_list");
-        if ((pac != null && !pac.isEmpty()) || (host != null && !host.isEmpty() && port > 0)) {
-            return new RootProxyState.Value(host, port, exclusions == null ? new ArrayList<>() : Arrays.asList(exclusions.split(",")), pac);
-        }
-        return null;
-    }
-
-    private static void repairStored(Context context, RootProxyState.Value target) {
-        android.content.ContentResolver resolver = context.getContentResolver();
-        if (!Settings.Global.putString(resolver, "global_http_proxy_host", target == null ? "" : target.host)
-            || !Settings.Global.putInt(resolver, "global_http_proxy_port", target == null ? 0 : target.port)
-            || !Settings.Global.putString(resolver, "global_http_proxy_exclusion_list", target == null ? "" : String.join(",", target.exclusions))
-            || !Settings.Global.putString(resolver, "global_proxy_pac_url", target == null ? "" : target.pac)) {
-            throw new IllegalStateException("System proxy settings refused restoration");
-        }
-    }
-
     private static RootProxyState.Value configuredProxy() throws Exception {
         File address = new File(BASE, "config/system-proxy");
         if (!address.isFile() || address.length() == 0) return null;
@@ -212,17 +189,19 @@ public final class RootProxyMain {
             }
             RootProxyState.Value configured = lease == null ? configuredProxy() : null;
             final RootProxyState.Value applied = lease == null ? (configured != null && ownsLaunchConfig(context) ? configured : null) : lease.applied;
+            // app_process has no registered ApplicationThread for Settings' ContentResolver.
+            RootProxySettings settings = new RootProxySettings();
             RootProxyState.Backend backend = new RootProxyState.Backend() {
                 @Override public RootProxyState.Value cached() throws Exception {
                     return value((ProxyInfo) ConnectivityManager.class.getMethod("getGlobalProxy").invoke(manager));
                 }
-                @Override public RootProxyState.Value stored() { return RootProxyMain.stored(context); }
+                @Override public RootProxyState.Value stored() throws Exception { return settings.read(); }
                 @Override public void request(RootProxyState.Value target) throws Exception {
                     // Android skips null-to-null requests before updating stored proxy settings.
                     ProxyInfo replacement = target == null ? ProxyInfo.buildDirectProxy("", 0, new ArrayList<>()) : proxy(target);
                     ConnectivityManager.class.getMethod("setGlobalProxy", ProxyInfo.class).invoke(manager, replacement);
                 }
-                @Override public void repairStored(RootProxyState.Value target) { RootProxyMain.repairStored(context, target); }
+                @Override public void repairStored(RootProxyState.Value target) throws Exception { settings.write(target); }
             };
             if (lease == null && applied == null && configured != null && (configured.equals(backend.cached()) || configured.equals(backend.stored()))) {
                 throw new IllegalStateException("Legacy proxy ownership could not be verified");

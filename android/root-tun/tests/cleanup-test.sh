@@ -63,9 +63,22 @@ iptables() {
                 missing-ipv4-nat) echo "iptables v1.8.11 (legacy): can't initialize iptables table \`nat': Table does not exist (do you need to insmod?)" >&2; return 3 ;;
                 denied-nat) echo 'Permission denied (you must be root)' >&2; return 4 ;;
                 occupied-nat) echo '-N mihomo-output' ;;
+                owned-empty-redirect|owned-referenced-empty-redirect|owned-foreign-empty-redirect|owned-foreign-redirect)
+                    [ -f "$R/redirect-removed" ] || echo '-N mihomo-output'
+                    ;;
             esac
             ;;
-        '-w 1 -t nat -S mihomo-output') return 1 ;;
+        '-w 1 -t nat -S mihomo-output')
+            case "$CASE" in
+                owned-empty-redirect|owned-referenced-empty-redirect|owned-foreign-empty-redirect) echo '-N mihomo-output' ;;
+                owned-foreign-redirect) printf '%s\n' '-N mihomo-output' '-A mihomo-output -o foreign0 -j RETURN' ;;
+                *) return 1 ;;
+            esac
+            ;;
+        '-w 1 -t nat -X mihomo-output')
+            [ "$CASE" = owned-empty-redirect ] || return 1
+            touch "$R/redirect-removed"
+            ;;
         *) exit 99 ;;
     esac
     [ "$CASE" != inspect-firewall ] || { echo 'Permission denied' >&2; return 3; }
@@ -83,7 +96,7 @@ ip6tables() {
     iptables "$@"
 }
 STUBS
-for scenario in incomplete stale-script missing-table missing-ipv6-nat previous-boot previous-boot-proxy previous-boot-proxy-failure orphan-proxy reconcile-previous reconcile-unowned reconcile-previous-proxy-failure reconcile-current reconcile-active reconcile-booting reconcile-reserved proxy-repair-orphan proxy-repair-failure proxy-repair-live proxy-repair-live-failure proxy-repair-booting owned reserved-rules inspect-rules inspect-routes reserved-table reserved-link reserved-chain inspect-firewall missing-ipv4-nat denied-nat denied-ipv6-nat broken-ipv6-nat occupied-nat unsafe-tree; do
+for scenario in incomplete stale-script missing-table missing-ipv6-nat previous-boot previous-boot-proxy previous-boot-proxy-failure orphan-proxy reconcile-previous reconcile-unowned reconcile-previous-proxy-failure reconcile-current reconcile-active reconcile-booting reconcile-reserved proxy-repair-orphan proxy-repair-failure proxy-repair-live proxy-repair-live-failure proxy-repair-booting owned owned-empty-redirect owned-referenced-empty-redirect owned-foreign-empty-redirect owned-foreign-redirect reserved-rules inspect-rules inspect-routes reserved-table reserved-link reserved-chain inspect-firewall missing-ipv4-nat denied-nat denied-ipv6-nat broken-ipv6-nat occupied-nat unsafe-tree; do
     R=$WORK/$scenario
     mkdir -p "$R"
     if [ "$scenario" = stale-script ]; then
@@ -91,15 +104,11 @@ for scenario in incomplete stale-script missing-table missing-ipv6-nat previous-
         printf 'echo stale-script-was-executed >&2\nexit 91\n' > "$R/scripts/runtime.sh"
     fi
     case "$scenario" in
-        previous-boot*|reconcile-*|owned)
+        previous-boot*|reconcile-*|owned*)
             mkdir -p "$R/state"
             printf 'reserved\n' > "$R/state/owned"
-            if [ "$scenario" != owned ]; then
-                printf 'previous-boot\n' > "$R/state/owned.boot"
-                mkdir -p "$R/run"
-                printf 'previous-boot\n' > "$R/run/boot-id"
-                printf 'old OS firewall baseline\n' > "$R/state/baseline.iptables"
-            else
+            case "$scenario" in
+            owned*)
                 printf 'test-boot\n' > "$R/state/owned.boot"
                 for item in -4.rules -6.rules; do
                     printf '0: from all lookup local\n10000: from all lookup 99\n32000: from all unreachable\n' > "$R/state/baseline.$item"
@@ -108,7 +117,15 @@ for scenario in incomplete stale-script missing-table missing-ipv6-nat previous-
                 for item in iptables ip6tables; do
                     printf '*filter\n:OUTPUT ACCEPT [0:0]\nCOMMIT\n' > "$R/state/baseline.$item"
                 done
-            fi
+                [ "$scenario" != owned-foreign-empty-redirect ] || printf ':mihomo-output - [0:0]\n' >> "$R/state/baseline.iptables"
+                ;;
+            *)
+                printf 'previous-boot\n' > "$R/state/owned.boot"
+                mkdir -p "$R/run"
+                printf 'previous-boot\n' > "$R/run/boot-id"
+                printf 'old OS firewall baseline\n' > "$R/state/baseline.iptables"
+                ;;
+            esac
             ;;
     esac
     case "$scenario" in
@@ -144,7 +161,7 @@ for scenario in incomplete stale-script missing-table missing-ipv6-nat previous-
     result=0
     sh "$WORK/current-runtime.sh" "$operation" > "$WORK/stdout" 2> "$WORK/stderr" || result=$?
     case "$scenario" in
-        incomplete|stale-script|missing-table|missing-ipv6-nat|previous-boot|previous-boot-proxy|orphan-proxy|reconcile-previous|reconcile-unowned|proxy-repair-orphan|owned)
+        incomplete|stale-script|missing-table|missing-ipv6-nat|previous-boot|previous-boot-proxy|orphan-proxy|reconcile-previous|reconcile-unowned|proxy-repair-orphan|owned|owned-empty-redirect)
             if [ "$result" -ne 0 ]; then cat "$WORK/stderr" >&2; exit 1; fi
             grep -q '^disabled ' "$R/state/status"
             [ ! -e "$R/run/owner.lock" ] && [ ! -e "$R/run/control.lock" ]
@@ -159,6 +176,12 @@ for scenario in incomplete stale-script missing-table missing-ipv6-nat previous-
             fi
             [ ! -s "$WORK/stderr" ]
             [ "$scenario" != proxy-repair-orphan ] || [ ! -s "$R/config/system-proxy" ]
+            [ "$scenario" != owned-empty-redirect ] || [ -f "$R/redirect-removed" ]
+            ;;
+        owned-referenced-empty-redirect|owned-foreign-empty-redirect|owned-foreign-redirect)
+            [ "$result" -ne 0 ] && [ -f "$R/state/owned" ]
+            [ ! -f "$R/redirect-removed" ]
+            grep -q '^stopping CLEANUP_FAILED$' "$R/state/status"
             ;;
         proxy-repair-failure)
             [ "$result" -ne 0 ]
