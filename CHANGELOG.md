@@ -492,7 +492,7 @@
 - Update core
 - Optimize more details
 - Merge pull request #140 from txyyh/main
-- 娣诲姞鑷缓 F-Droid 浠撳簱鐩稿叧 workflow
+- 添加自建 F-Droid 仓库相关 workflow
 - Rename readme fingerprint
 - Rename workflow deploy repo name
 - Add download guide to README
