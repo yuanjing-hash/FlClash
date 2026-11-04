@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.7 (2026-11-05)
+
+**Bug Fixes**
+
+- **android** Recover Android 17 proxy cleanup and preserve Root TUN across transient network changes (37af16f)
+
 ## v1.1.6 (2026-11-05)
 
 **Bug Fixes**
