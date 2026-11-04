@@ -39,6 +39,7 @@ class RootLaunchConfigTest {
         assertEquals(8192, tun["mtu"])
         assertEquals("bbr", tun["congestionController"])
         assertEquals(true, tun["ipv6"])
+        assertEquals(true, tun["perApp"])
         assertEquals(false, tun["dnsHijacking"])
         assertEquals(options.routeAddress, tun["routeAddress"])
         assertEquals(include, tun["includeUid"])
@@ -64,7 +65,33 @@ class RootLaunchConfigTest {
         assertEquals(emptyList<Int>(), include)
         assertEquals(listOf(10200), exclude)
         assertEquals(listOf("10200"), RootLaunchConfig.bypassUidRanges(include, exclude))
+        assertEquals(
+            false,
+            RootLaunchConfig.tun(
+                options.copy(accessControlProps = options.accessControlProps.copy(enable = false)),
+                include,
+                exclude,
+            )["perApp"],
+        )
         assertFalse(RootLaunchConfig.tun(options, include, exclude)["enable"] as Boolean)
+    }
+
+    @Test
+    fun vpnHttpProxyPreferencesCannotChangeRootTunRouting() {
+        val state =
+            SharedState(vpnOptions = options().copy(port = 0), setupParams = SetupParams("https://example.test/ping", emptyMap(), true))
+        val enabled = RootLaunchConfig.prepare(state, 10190, { 10200 }, emptyMap())
+        val disabled =
+            RootLaunchConfig.prepare(
+                state.copy(vpnOptions = state.vpnOptions!!.copy(systemProxy = false)),
+                10190,
+                { 10200 },
+                emptyMap(),
+            )
+        assertEquals(enabled.launch, disabled.launch)
+        assertEquals("", enabled.files["system-proxy"])
+        assertEquals("", disabled.files["system-proxy"])
+        assertEquals(state.vpnOptions, Gson().fromJson(enabled.files["vpn-options.json"], VpnOptions::class.java))
     }
 
     @Test
@@ -81,10 +108,11 @@ class RootLaunchConfigTest {
         assertEquals(state.setupParams, prepared.launch["setup"])
         assertEquals(state.updateParams, prepared.launch["updates"])
         assertEquals(state.vpnOptions, Gson().fromJson(prepared.files["vpn-options.json"], VpnOptions::class.java))
-        assertEquals("127.0.0.1:7890", prepared.files["system-proxy"])
+        assertEquals("", prepared.files["system-proxy"])
         assertEquals("*.example", prepared.files["proxy-exclusions"])
         assertEquals("1\n", prepared.files["allow-bypass"])
         assertEquals("0\n", prepared.files["dns-hijacking"])
+        assertEquals("1\n", prepared.files["per-app-dns"])
         assertEquals("8.0.0.0/8\n198.18.0.0/30\n", prepared.files["routes4"])
         assertEquals("2001:db8::/32\nfdfe:dcba:9876::/126\n", prepared.files["routes6"])
         val changed =
@@ -92,6 +120,7 @@ class RootLaunchConfigTest {
                 null
             }, emptyMap())
         assertEquals("0\n", changed.files["tun.enabled"])
+        assertEquals("0\n", changed.files["per-app-dns"])
         assertEquals("", changed.files["system-proxy"])
         assertFalse(prepared.files["vpn-options.json"] == changed.files["vpn-options.json"])
         assertEquals(listOf("10000-10002", "10100"), RootLaunchConfig.bypassUidRanges(emptyList(), listOf(10002, 10000, 10100, 10001)))

@@ -6,6 +6,7 @@ import android.net.ProxyInfo;
 import android.net.Uri;
 import android.system.Os;
 import android.util.Xml;
+import android.provider.Settings;
 
 import com.follow.clash.models.SharedState;
 import com.google.gson.Gson;
@@ -99,48 +100,151 @@ public final class RootProxyMain {
             .put("pac", proxy.getPacFileUrl().toString());
     }
 
+    private static RootProxyState.Value value(ProxyInfo proxy) {
+        if (proxy == null) return null;
+        return RootProxyState.value(proxy.getHost(), proxy.getPort(), Arrays.asList(proxy.getExclusionList()), proxy.getPacFileUrl().toString());
+    }
+
+    private static ProxyInfo proxy(RootProxyState.Value value) {
+        if (value == null) return null;
+        return value.pac.isEmpty() ? ProxyInfo.buildDirectProxy(value.host, value.port, value.exclusions)
+            : ProxyInfo.buildPacProxy(Uri.parse(value.pac));
+    }
+
+    private static RootProxyState.Value legacyValue(String address) {
+        if (address == null || address.isEmpty()) return null;
+        int colon = address.lastIndexOf(':');
+        if (colon <= 0) return null;
+        try {
+            int port = Integer.parseInt(address.substring(colon + 1));
+            return port > 0 && port <= 65535 ? new RootProxyState.Value(address.substring(0, colon), port, new ArrayList<>(), "") : null;
+        } catch (NumberFormatException error) {
+            return null;
+        }
+    }
+
+    private static RootProxyState.Value stored(Context context) {
+        android.content.ContentResolver resolver = context.getContentResolver();
+        String host = Settings.Global.getString(resolver, "global_http_proxy_host");
+        String pac = Settings.Global.getString(resolver, "global_proxy_pac_url");
+        int port = Settings.Global.getInt(resolver, "global_http_proxy_port", 0);
+        String exclusions = Settings.Global.getString(resolver, "global_http_proxy_exclusion_list");
+        if ((pac != null && !pac.isEmpty()) || (host != null && !host.isEmpty() && port > 0)) {
+            return new RootProxyState.Value(host, port, exclusions == null ? new ArrayList<>() : Arrays.asList(exclusions.split(",")), pac);
+        }
+        return null;
+    }
+
+    private static void repairStored(Context context, RootProxyState.Value target) {
+        android.content.ContentResolver resolver = context.getContentResolver();
+        if (!Settings.Global.putString(resolver, "global_http_proxy_host", target == null ? "" : target.host)
+            || !Settings.Global.putInt(resolver, "global_http_proxy_port", target == null ? 0 : target.port)
+            || !Settings.Global.putString(resolver, "global_http_proxy_exclusion_list", target == null ? "" : String.join(",", target.exclusions))
+            || !Settings.Global.putString(resolver, "global_proxy_pac_url", target == null ? "" : target.pac)) {
+            throw new IllegalStateException("System proxy settings refused restoration");
+        }
+    }
+
+    private static RootProxyState.Value configuredProxy() throws Exception {
+        File address = new File(BASE, "config/system-proxy");
+        if (!address.isFile() || address.length() == 0) return null;
+        String endpoint = new String(Files.readAllBytes(address.toPath()), StandardCharsets.UTF_8).trim();
+        RootProxyState.Value candidate = legacyValue(endpoint);
+        if (candidate == null || !"127.0.0.1".equals(candidate.host)) return null;
+        File exclusionsFile = new File(BASE, "config/proxy-exclusions");
+        if (!exclusionsFile.isFile()) return null;
+        String exclusions = new String(Files.readAllBytes(exclusionsFile.toPath()), StandardCharsets.UTF_8);
+        return new RootProxyState.Value(candidate.host, candidate.port, Arrays.asList(exclusions.split(",")), "");
+    }
+
+    private static boolean ownsLaunchConfig(Context context) throws Exception {
+        if (!new File(BASE, "state/session").isFile() || !new File(BASE, "config/app.package").isFile()
+            || !new File(BASE, "config/app.uid").isFile()) return false;
+        String owner = new String(Files.readAllBytes(new File(BASE, "config/app.package").toPath()), StandardCharsets.UTF_8).trim();
+        int uid = Integer.parseInt(new String(Files.readAllBytes(new File(BASE, "config/app.uid").toPath()), StandardCharsets.UTF_8).trim());
+        return "com.follow.clash.root".equals(owner) && uid >= 10000
+            && uid % 100000 == context.getPackageManager().getApplicationInfo(owner, 0).uid % 100000;
+    }
+
+    private static void flushDns(Context context) throws Exception {
+        boolean modern = android.os.Build.VERSION.SDK_INT >= 29;
+        String type = modern ? "android.net.IDnsResolver" : "android.net.INetd";
+        Object binder = Class.forName("android.os.ServiceManager").getMethod("getService", String.class)
+            .invoke(null, modern ? "dnsresolver" : "netd");
+        Object resolver = Class.forName(type + "$Stub").getMethod("asInterface", android.os.IBinder.class)
+            .invoke(null, binder);
+        java.lang.reflect.Method flush = Class.forName(type)
+            .getMethod(modern ? "flushNetworkCache" : "resolverFlushCacheForNet", int.class);
+        ConnectivityManager manager = context.getSystemService(ConnectivityManager.class);
+        for (android.net.Network network : manager.getAllNetworks()) {
+            flush.invoke(resolver, (int) (network.getNetworkHandle() >>> 32));
+        }
+        android.content.Intent intent = new android.content.Intent("android.intent.action.CLEAR_DNS_CACHE")
+            .addFlags(android.content.Intent.FLAG_RECEIVER_REPLACE_PENDING | android.content.Intent.FLAG_RECEIVER_REGISTERED_ONLY);
+        Object users = android.os.UserHandle.class.getField("ALL").get(null);
+        Context.class.getMethod("sendBroadcastAsUser", android.content.Intent.class, android.os.UserHandle.class)
+            .invoke(context, intent, users);
+    }
+
     public static void main(String[] args) {
         try {
             if (android.os.Process.myUid() != 0 || args.length != 1) throw new IllegalStateException("Root required");
+            File state = new File(BASE, "state/proxy.json");
+            if ("restore".equals(args[0]) && !state.isFile() && new File(BASE, "config/system-proxy").length() == 0) return;
             if (android.os.Looper.myLooper() == null) android.os.Looper.prepareMainLooper();
             Class<?> activityThread = Class.forName("android.app.ActivityThread");
             Object thread = activityThread.getMethod("systemMain").invoke(null);
             Context context = (Context) activityThread.getMethod("getSystemContext").invoke(thread);
+            if ("flush-dns".equals(args[0])) {
+                flushDns(context);
+                System.exit(0);
+            }
             if ("prepare".equals(args[0])) {
                 prepare(context);
                 System.exit(0);
             }
             ConnectivityManager manager = context.getSystemService(ConnectivityManager.class);
-            ProxyInfo current = (ProxyInfo) ConnectivityManager.class.getMethod("getGlobalProxy").invoke(manager);
-            File state = new File(BASE, "state/proxy.json");
-            ProxyInfo replacement;
-            if ("apply".equals(args[0])) {
-                String address = new String(Files.readAllBytes(new File(BASE, "config/system-proxy").toPath()), StandardCharsets.UTF_8).trim();
-                if (address.isEmpty()) return;
-                String exclusions = new String(Files.readAllBytes(new File(BASE, "config/proxy-exclusions").toPath()), StandardCharsets.UTF_8);
-                replacement = ProxyInfo.buildDirectProxy("127.0.0.1", Integer.parseInt(address.substring(address.lastIndexOf(':') + 1)),
-                    exclusions.isEmpty() ? new ArrayList<>() : Arrays.asList(exclusions.split(",")));
-                JSONObject snapshot = new JSONObject().put("previous", encode(current)).put("applied", encode(replacement));
-                File temporary = new File(state.getPath() + ".tmp");
-                Files.write(temporary.toPath(), snapshot.toString().getBytes(StandardCharsets.UTF_8));
-                Files.move(temporary.toPath(), state.toPath(), java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            } else if ("restore".equals(args[0])) {
-                if (!state.isFile()) return;
-                JSONObject snapshot = new JSONObject(new String(Files.readAllBytes(state.toPath()), StandardCharsets.UTF_8));
-                ProxyInfo applied = decode(snapshot.getJSONObject("applied"));
-                if (current == null || !current.equals(applied)) {
-                    Files.deleteIfExists(state.toPath());
-                    return;
-                }
-                replacement = decode(snapshot.getJSONObject("previous"));
-            } else {
-                throw new IllegalArgumentException("Unknown proxy operation");
+            if (!"restore".equals(args[0])) throw new IllegalArgumentException("Root TUN does not install a global HTTP proxy");
+            RootProxyState.Lease lease = null;
+            if (state.isFile()) {
+                JSONObject saved = new JSONObject(new String(Files.readAllBytes(state.toPath()), StandardCharsets.UTF_8));
+                lease = new RootProxyState.Lease(value(decode(saved.getJSONObject("previous"))), value(decode(saved.getJSONObject("applied"))));
             }
-            ConnectivityManager.class.getMethod("setGlobalProxy", ProxyInfo.class).invoke(manager, replacement);
-            if ("restore".equals(args[0])) Files.deleteIfExists(state.toPath());
+            RootProxyState.Value configured = lease == null ? configuredProxy() : null;
+            final RootProxyState.Value applied = lease == null ? (configured != null && ownsLaunchConfig(context) ? configured : null) : lease.applied;
+            RootProxyState.Backend backend = new RootProxyState.Backend() {
+                @Override public RootProxyState.Value cached() throws Exception {
+                    return value((ProxyInfo) ConnectivityManager.class.getMethod("getGlobalProxy").invoke(manager));
+                }
+                @Override public RootProxyState.Value stored() { return RootProxyMain.stored(context); }
+                @Override public void request(RootProxyState.Value target) throws Exception {
+                    // Android skips null-to-null requests before updating stored proxy settings.
+                    ProxyInfo replacement = target == null ? ProxyInfo.buildDirectProxy("", 0, new ArrayList<>()) : proxy(target);
+                    ConnectivityManager.class.getMethod("setGlobalProxy", ProxyInfo.class).invoke(manager, replacement);
+                }
+                @Override public void repairStored(RootProxyState.Value target) { RootProxyMain.repairStored(context, target); }
+            };
+            if (lease == null && applied == null && configured != null && (configured.equals(backend.cached()) || configured.equals(backend.stored()))) {
+                throw new IllegalStateException("Legacy proxy ownership could not be verified");
+            }
+            RootProxyState.Plan plan = RootProxyState.plan(backend.cached(), backend.stored(), lease, applied);
+            if (plan.owned && !state.isFile()) {
+                write(state, new JSONObject().put("previous", encode(null)).put("applied", encode(proxy(applied)))
+                    .put("source", "legacy-launch-config").toString());
+            }
+            RootProxyState.restore(backend, plan);
+            if (state.isFile()) {
+                JSONObject completed = new JSONObject(new String(Files.readAllBytes(state.toPath()), StandardCharsets.UTF_8));
+                completed.put("owned", plan.owned).put("verified", true)
+                    .put("serviceAfter", encode(proxy(backend.cached()))).put("settingsAfter", encode(proxy(backend.stored())));
+                write(state, completed.toString());
+                Files.move(state.toPath(), new File(BASE, "state/proxy-last-restored.json").toPath(),
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            }
             System.exit(0);
         } catch (Exception error) {
             System.err.println("phase=root/" + (args.length == 1 ? args[0] : "helper") + ": " + error);
+            error.printStackTrace(System.err);
             System.exit(1);
         }
     }

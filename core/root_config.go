@@ -14,6 +14,7 @@ import (
 
 type RootOptions struct {
 	Enable               bool     `json:"enable"`
+	PerApp               bool     `json:"perApp"`
 	IPv6                 bool     `json:"ipv6"`
 	DNSHijacking         bool     `json:"dnsHijacking"`
 	Stack                string   `json:"stack"`
@@ -121,6 +122,9 @@ func applyRootOptions(cfg *config.Config) error {
 	cfg.General.Tun = tun
 	cfg.General.RoutingMark = 0x40000000
 	if cfg.DNS.Enable {
+		if rootOptions.Enable && rootOptions.PerApp {
+			cfg.DNS.EnhancedMode = constant.DNSMapping
+		}
 		policies := make([]dns.Policy, 0, len(cfg.DNS.NameServerPolicy))
 		for _, policy := range cfg.DNS.NameServerPolicy {
 			if policy.Domain != "flclash-root-health.invalid" {

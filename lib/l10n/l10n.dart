@@ -7842,6 +7842,26 @@ class AppLocalizations {
     return Intl.message('Root TUN', name: 'rootTun', desc: '', args: []);
   }
 
+  /// `Root TUN routes traffic by app and does not set a global HTTP proxy. System proxy and bypass domains apply only in VPN mode.`
+  String get rootTunSystemProxyDesc {
+    return Intl.message(
+      'Root TUN routes traffic by app and does not set a global HTTP proxy. System proxy and bypass domains apply only in VPN mode.',
+      name: 'rootTunSystemProxyDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
+  /// `With DNS enabled, Root TUN with per-app access control uses real IP DNS (redir-host). The DNS mode saved here remains available for VPN and Root TUN without per-app access control. Restart the proxy after changing per-app settings.`
+  String get rootTunPerAppDnsDesc {
+    return Intl.message(
+      'With DNS enabled, Root TUN with per-app access control uses real IP DNS (redir-host). The DNS mode saved here remains available for VPN and Root TUN without per-app access control. Restart the proxy after changing per-app settings.',
+      name: 'rootTunPerAppDnsDesc',
+      desc: '',
+      args: [],
+    );
+  }
+
   /// `Disabled`
   String get rootTunStateDisabled {
     return Intl.message(

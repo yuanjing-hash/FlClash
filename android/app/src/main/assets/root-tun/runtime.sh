@@ -315,7 +315,7 @@ compare_restoration() {
     done
     mv "$diff_file.tmp" "$diff_file"
     if [ -s "$diff_file" ]; then
-        printf '%s WARN CLEANUP_FAILED: network differs from baseline; see restore-diff.txt\n' "$(date +%s)" >> "$R/logs/transitions.log"
+        printf '%s INFO: network changed since baseline; see restore-diff.txt\n' "$(date +%s)" >> "$R/logs/transitions.log"
     fi
     [ "$comparison_ok" -eq 1 ] || { runtime_error compare-restoration 'baseline is incomplete; see restore-diff.txt'; return 1; }
 }
@@ -402,17 +402,24 @@ configure_guard() {
 }
 
 configure_system_proxy() {
-    [ -s "$R/config/system-proxy" ] || return 0
-    root_proxy apply
+    restore_system_proxy
 }
 
 restore_system_proxy() {
-    [ -f "$STATE/proxy.json" ] || return 0
-    root_proxy restore
+    [ -f "$STATE/proxy.json" ] || [ -s "$R/config/system-proxy" ] || return 0
+    root_proxy restore || return 1
+    if [ -f "$R/config/system-proxy" ]; then : > "$R/config/system-proxy"; fi
 }
 
 root_proxy() {
-    CLASSPATH="$R/bin/proxy-helper.jar" timeout -s KILL 4 /system/bin/app_process /system/bin com.follow.clash.root.RootProxyMain "$1"
+    CLASSPATH="${ROOT_PROXY_CLASSPATH:-$R/bin/proxy-helper.jar}" timeout -s KILL 4 /system/bin/app_process /system/bin com.follow.clash.root.RootProxyMain "$1"
+}
+
+flush_dns_cache() {
+    [ "$(cat "$R/config/per-app-dns" 2>/dev/null)" = 1 ] || return 0
+    if ! root_proxy flush-dns >> "$R/logs/launch.log" 2>&1; then
+        runtime_log launch 'system DNS cache flush incomplete'
+    fi
 }
 
 update_private_dns() {
@@ -457,18 +464,26 @@ stop_core() {
 
 cleanup() {
     owns || { runtime_error cleanup-owner 'runtime ownership changed'; return 1; }
+    cleanup_previous_boot=0
+    cleanup_boot=$(cat "$STATE/owned.boot" 2>/dev/null) || cleanup_boot=$(cat "$RUN/boot-id" 2>/dev/null) || cleanup_boot=''
+    if [ -n "$cleanup_boot" ] && [ "$cleanup_boot" != "$BOOT" ]; then cleanup_previous_boot=1; fi
     if [ -f "$STATE/owned" ] && [ "$(cat "$STATE/owned.boot" 2>/dev/null)" != "$BOOT" ]; then
         if [ ! -f "$STATE/owned.boot" ] && alive "$RUN/core.pid"; then
             printf '%s\n' "$BOOT" > "$STATE/owned.boot"
+            cleanup_previous_boot=0
         else
             vacant || return 1
-            rm -f "$STATE/owned" "$STATE/owned.boot"
+            cleanup_previous_boot=1
         fi
     fi
     stop_core || { runtime_error stop-core 'could not terminate the recorded core'; return 1; }
-    if [ ! -f "$STATE/owned" ]; then
+    if [ ! -f "$STATE/owned" ] || [ "$cleanup_previous_boot" -eq 1 ]; then
         vacant || return 1
-        if [ -f "$STATE/baseline.iptables" ]; then compare_restoration
+        restore_system_proxy || { runtime_error restore-proxy 'could not restore the recorded system proxy'; return 1; }
+        if [ "$cleanup_previous_boot" -eq 1 ]; then
+            rm -f "$STATE/owned" "$STATE/owned.boot"
+            : > "$R/logs/restore-diff.txt"
+        elif [ -f "$STATE/baseline.iptables" ]; then compare_restoration
         else : > "$R/logs/restore-diff.txt"; fi
         return $?
     fi
@@ -517,6 +532,7 @@ launch_core() {
         mv "$R/logs/core.log" "$R/logs/core.log.1"
     fi
     rm -f "$RUN/core-ready"
+    flush_dns_cache
     "$CORE" --root-config "$R/config/root-core.json" >> "$R/logs/core.log" 2>&1 &
     core_pid=$!
     core_ticks=$(ticks "$core_pid")
@@ -1128,9 +1144,40 @@ stop_runtime() {
     rm -f "$RUN/supervisor.pid" "$RUN/supervisor.heartbeat" "$RUN/healthy"
 }
 
+reconcile_boot() {
+    previous_boot=$(cat "$RUN/boot-id" 2>/dev/null) || previous_boot=$(cat "$STATE/owned.boot" 2>/dev/null) || previous_boot=''
+    [ -n "$previous_boot" ] && [ "$previous_boot" != "$BOOT" ] || return 0
+    if alive "$RUN/supervisor.pid" || alive "$RUN/core.pid"; then return 0; fi
+    if alive "$RUN/boot.lock"; then echo boot-reconcile:deferred; return 0; fi
+    claim_owner || { runtime_error claim-owner 'runtime owner is still active'; return 1; }
+    touch "$RUN/stop"
+    publish stopping
+    if ! cleanup; then publish stopping CLEANUP_FAILED; unlock owner; return 1; fi
+    publish disabled
+    rm -f "$RUN/boot-id"
+    rm -f "$RUN/supervisor.pid" "$RUN/supervisor.heartbeat" "$RUN/healthy"
+    unlock owner
+}
+
+repair_proxy() {
+    [ -f "$STATE/proxy.json" ] || [ -s "$R/config/system-proxy" ] || return 0
+    if alive "$RUN/boot.lock"; then printf 'proxy-repair:deferred\n'; return 0; fi
+    if alive "$RUN/supervisor.pid" || alive "$RUN/core.pid"; then
+        restore_system_proxy || return 1
+        printf 'proxy-repair:verified\n'
+        return 0
+    fi
+    claim_owner || { runtime_error claim-owner 'runtime owner is still active'; return 1; }
+    publish stopping
+    if ! restore_system_proxy; then publish stopping CLEANUP_FAILED; unlock owner; return 1; fi
+    publish disabled
+    unlock owner
+    printf 'proxy-repair:verified\n'
+}
+
 safe_tree || exit 1
 case "${1:-}" in
-    stop|cleanup|cleanup-owned)
+    stop|cleanup|cleanup-owned|reconcile-boot|repair-proxy)
         mkdir -p "$RUN" "$STATE" "$R/logs" "$R/tmp" && chmod 700 "$RUN" "$STATE" "$R/logs" "$R/tmp" || exit 1
         ;;
     *)
@@ -1212,9 +1259,13 @@ case "${1:-}" in
         ;;
     supervise) supervise "${2:-}" ;;
     watchdog) watchdog ;;
-    stop|cleanup)
+    stop|cleanup|reconcile-boot|repair-proxy)
         wait_control || { runtime_error control-lock 'another runtime command is active'; exit 1; }
-        stop_runtime "$1"
+        case "$1" in
+            reconcile-boot) reconcile_boot ;;
+            repair-proxy) repair_proxy ;;
+            *) stop_runtime "$1" ;;
+        esac
         result=$?
         unlock control
         exit "$result"

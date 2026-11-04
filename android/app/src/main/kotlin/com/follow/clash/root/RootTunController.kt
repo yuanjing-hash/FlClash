@@ -46,6 +46,9 @@ internal class RootTunController(
 
     @Volatile private var desiredRunning = false
     private var monitorStarted = false
+    private var bootCleanupAttempted = false
+    private var bootCleanupDeferred = false
+    private var systemProxyChecked = false
     private var coreAttachment: Deferred<Boolean>? = null
 
     @Volatile private var authorizationMonitorStarted = false
@@ -421,10 +424,36 @@ internal class RootTunController(
         root: RootStatus,
         requestId: String? = null,
     ) {
-        val status =
+        var status =
             monitoredStatus(root.manager, authChannel().runtimeStatus) {
                 if (root.auth == "granted") runtime.status() else ShellResult(1, "", "Authorization unavailable")
             }
+        if (!current(revision)) return
+        if (status != null) bootCleanupDeferred = false
+        if (!bootCleanupAttempted && root.auth == "granted" && RootReconciliation.requiresBootCleanup(status)) {
+            bootCleanupAttempted = true
+            val cleanup = runtime.reconcileBoot()
+            bootCleanupDeferred = cleanup.stdout.lineSequence().any { it == "boot-reconcile:deferred" }
+            if (bootCleanupDeferred) bootCleanupAttempted = false
+            if (!current(revision)) return
+            status = runtime.status()
+        }
+        var proxyRepairFailure: ShellResult? = null
+        if (!systemProxyChecked &&
+            root.auth == "granted" &&
+            root.manager in setOf("kernelsu", "apatch") &&
+            status
+                ?.stdout
+                ?.lineSequence()
+                ?.firstOrNull()
+                ?.substringBefore(' ') in setOf("disabled", "running")
+        ) {
+            val repair = runtime.repairSystemProxy()
+            systemProxyChecked = repair.stdout.lineSequence().none { it == "proxy-repair:deferred" }
+            if (!current(revision)) return
+            if (!repair.success) proxyRepairFailure = repair
+            status = runtime.status()
+        }
         if (status == null && (runtimeMayExist || authorizationWasGranted)) {
             if (root.manager == "magisk") {
                 markRuntimeStale(revision, requestId)
@@ -434,13 +463,22 @@ internal class RootTunController(
             startMonitor()
             return
         }
-        val checked = RootReconciliation.checked(snapshot, root, status)
+        val observed = RootReconciliation.checked(snapshot, root, status)
+        val checked =
+            if (proxyRepairFailure != null && observed.state == TunState.DISABLED) observed.copy(state = TunState.STOPPING) else observed
         synchronized(this) {
             if (!current(revision)) return
             reconciliationPolling.reset()
             desiredRunning = checked.state in setOf(TunState.RUNNING, TunState.STARTING, TunState.RECOVERING)
             runtimeMayExist = runtimeMayExist || desiredRunning || checked.state == TunState.STOPPING
-            publish(checked, checked.lastErrorCode?.let(RootCode::valueOf), requestId)
+            publish(
+                checked,
+                if (proxyRepairFailure != null) RootCode.CLEANUP_FAILED else checked.lastErrorCode?.let(RootCode::valueOf),
+                requestId,
+                proxyRepairFailure?.let {
+                    RootDiagnostics.redact("phase=restore-system-proxy exit=${it.exitCode} timeout=${it.timedOut}\n${it.stderr}")
+                },
+            )
             if (status != null) recordSession(status.stdout)
         }
         if (desiredRunning) {
@@ -680,6 +718,13 @@ internal class RootTunController(
                                     return@withLock
                                 }
                         if (!current(revision)) return@withLock
+                        if (bootCleanupDeferred ||
+                            (!bootCleanupAttempted && RootReconciliation.requiresBootCleanup(status)) ||
+                            (!systemProxyChecked && snapshot.rootManager in setOf("kernelsu", "apatch"))
+                        ) {
+                            reconcile(revision, RootStatus(snapshot.rootManager, snapshot.authStatus))
+                            return@withLock
+                        }
                         acceptStatus(status.stdout, revision = revision)
                         recordSession(status.stdout)
                     }
@@ -763,7 +808,6 @@ internal class RootTunController(
                 if (RootCode.LAST_SESSION_ABNORMAL_EXIT.name in snapshot.warnings) add(RootCode.LAST_SESSION_ABNORMAL_EXIT.name)
                 if ("dns:hostname" in raw) add(RootCode.PRIVATE_DNS_STRICT.name)
                 if ("always-on:yes" in raw) add(RootCode.ALWAYS_ON_VPN_CONFLICT.name)
-                if ("restore-diff:yes" in raw) add(RootCode.CLEANUP_FAILED.name)
             }
         val privateDnsMode = raw.lineSequence().firstOrNull { it.startsWith("dns:") }
         val signature = "$state:$code:$warnings:$privateDnsMode:${"autostart:yes" in raw}"

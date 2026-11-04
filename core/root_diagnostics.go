@@ -55,6 +55,7 @@ func rootNetworkState() map[string]any {
 		state["proxyCount"], state["ruleCount"] = len(cfg.Proxies), len(cfg.Rules)
 		state["findProcessMode"] = cfg.General.FindProcessMode.String()
 		state["dnsEnabled"], state["dnsMode"] = cfg.DNS.Enable, cfg.DNS.EnhancedMode.String()
+		state["ntpEnabled"], state["ntpWriteToSystem"] = cfg.NTP.Enable, cfg.NTP.WriteToSystem
 		state["dnsHijack"] = cfg.General.Tun.DNSHijack
 		if cfg.Profile != nil {
 			state["storeFakeIP"] = cfg.Profile.StoreFakeIP

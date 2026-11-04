@@ -16,7 +16,17 @@ chmod +x "$WORK/bin/iptables-save" "$WORK/bin/ip6tables-save"
 export PATH="$WORK/bin:$PATH"
 cat > "$WORK/stubs.sh" <<'STUBS'
 ticks() { printf '1\n'; }
-alive() { return 1; }
+alive() {
+    case "$CASE:$1" in
+        "reconcile-active:$RUN/core.pid"|"proxy-repair-live:$RUN/core.pid"|"proxy-repair-live-failure:$RUN/core.pid"|"reconcile-booting:$RUN/boot.lock"|"proxy-repair-booting:$RUN/boot.lock") return 0 ;;
+    esac
+    return 1
+}
+root_proxy() {
+    printf '%s\n' "$1" >> "$R/proxy-calls"
+    case "$CASE" in *proxy-failure|proxy-repair-failure|proxy-repair-live-failure) return 1 ;; esac
+    rm -f "$STATE/proxy.json"
+}
 stat() {
     if [ "$*" = "-c %u $R" ]; then printf '0\n'; else command stat "$@"; fi
 }
@@ -25,7 +35,7 @@ ip() {
         '-4 rule show'|'-6 rule show')
             [ "$CASE" != inspect-rules ] || { echo 'Operation not permitted' >&2; return 2; }
             printf '0: from all lookup local\n10000: from all lookup 99\n32000: from all unreachable\n'
-            [ "$CASE" != reserved-rules ] || echo '9000: from all lookup 1234'
+            case "$CASE" in reserved-rules|reconcile-reserved) echo '9000: from all lookup 1234' ;; esac
             ;;
         '-4 route show table 2022'|'-6 route show table 2022')
             case "$CASE" in
@@ -73,7 +83,7 @@ ip6tables() {
     iptables "$@"
 }
 STUBS
-for scenario in incomplete stale-script missing-table missing-ipv6-nat previous-boot owned reserved-rules inspect-rules inspect-routes reserved-table reserved-link reserved-chain inspect-firewall missing-ipv4-nat denied-nat denied-ipv6-nat broken-ipv6-nat occupied-nat unsafe-tree; do
+for scenario in incomplete stale-script missing-table missing-ipv6-nat previous-boot previous-boot-proxy previous-boot-proxy-failure orphan-proxy reconcile-previous reconcile-unowned reconcile-previous-proxy-failure reconcile-current reconcile-active reconcile-booting reconcile-reserved proxy-repair-orphan proxy-repair-failure proxy-repair-live proxy-repair-live-failure proxy-repair-booting owned reserved-rules inspect-rules inspect-routes reserved-table reserved-link reserved-chain inspect-firewall missing-ipv4-nat denied-nat denied-ipv6-nat broken-ipv6-nat occupied-nat unsafe-tree; do
     R=$WORK/$scenario
     mkdir -p "$R"
     if [ "$scenario" = stale-script ]; then
@@ -81,11 +91,14 @@ for scenario in incomplete stale-script missing-table missing-ipv6-nat previous-
         printf 'echo stale-script-was-executed >&2\nexit 91\n' > "$R/scripts/runtime.sh"
     fi
     case "$scenario" in
-        previous-boot|owned)
+        previous-boot*|reconcile-*|owned)
             mkdir -p "$R/state"
             printf 'reserved\n' > "$R/state/owned"
-            if [ "$scenario" = previous-boot ]; then
+            if [ "$scenario" != owned ]; then
                 printf 'previous-boot\n' > "$R/state/owned.boot"
+                mkdir -p "$R/run"
+                printf 'previous-boot\n' > "$R/run/boot-id"
+                printf 'old OS firewall baseline\n' > "$R/state/baseline.iptables"
             else
                 printf 'test-boot\n' > "$R/state/owned.boot"
                 for item in -4.rules -6.rules; do
@@ -98,24 +111,96 @@ for scenario in incomplete stale-script missing-table missing-ipv6-nat previous-
             fi
             ;;
     esac
+    case "$scenario" in
+        proxy-repair-*)
+            mkdir -p "$R/config"
+            printf '127.0.0.1:7890' > "$R/config/system-proxy"
+            ;;
+    esac
+    case "$scenario" in
+        *proxy*|reconcile-previous)
+            mkdir -p "$R/state"
+            printf 'recorded previous and applied proxy\n' > "$R/state/proxy.json"
+            ;;
+    esac
+    [ "$scenario" != reconcile-current ] || printf 'test-boot\n' > "$R/run/boot-id"
+    [ "$scenario" != reconcile-unowned ] || rm -f "$R/state/owned" "$R/state/owned.boot"
+    [ "$scenario" != proxy-repair-orphan ] || rm -f "$R/state/proxy.json"
+    if [ "$scenario" = reconcile-booting ]; then
+        mkdir -p "$R/config"
+        printf '1\n' > "$R/config/autostart-enabled"
+    fi
     sed -e "s|^R=/data/adb/flclash-root$|R='$R'|" \
         -e 's|^BOOT=.*|BOOT=test-boot|' -e '/^export PATH=/d' \
         -e "/^safe_tree || exit 1/i\\
 . '$WORK/stubs.sh'" "$SOURCE" > "$WORK/current-runtime.sh"
     export CASE=$scenario
+    operation=cleanup
+    case "$scenario" in reconcile-*) operation=reconcile-boot ;; proxy-repair-*) operation=repair-proxy ;; esac
     if [ "$scenario" = unsafe-tree ]; then
         sed "s|\[ ! -L \"\$R\" \]|[ false = true ]|" "$WORK/current-runtime.sh" > "$WORK/unsafe-runtime.sh"
         cp "$WORK/unsafe-runtime.sh" "$WORK/current-runtime.sh"
     fi
     result=0
-    sh "$WORK/current-runtime.sh" cleanup > "$WORK/stdout" 2> "$WORK/stderr" || result=$?
+    sh "$WORK/current-runtime.sh" "$operation" > "$WORK/stdout" 2> "$WORK/stderr" || result=$?
     case "$scenario" in
-        incomplete|stale-script|missing-table|missing-ipv6-nat|previous-boot|owned)
+        incomplete|stale-script|missing-table|missing-ipv6-nat|previous-boot|previous-boot-proxy|orphan-proxy|reconcile-previous|reconcile-unowned|proxy-repair-orphan|owned)
             if [ "$result" -ne 0 ]; then cat "$WORK/stderr" >&2; exit 1; fi
             grep -q '^disabled ' "$R/state/status"
             [ ! -e "$R/run/owner.lock" ] && [ ! -e "$R/run/control.lock" ]
             [ ! -f "$R/state/owned" ] && [ ! -f "$R/state/owned.boot" ]
+            [ ! -f "$R/state/proxy.json" ]
+            case "$scenario" in *proxy|reconcile-previous) [ "$(cat "$R/proxy-calls")" = restore ] ;; esac
+            [ "$scenario" != reconcile-previous ] || [ ! -f "$R/run/boot-id" ]
+            if [ "$scenario" = reconcile-previous ]; then
+                sh "$WORK/current-runtime.sh" reconcile-boot
+                [ "$(wc -l < "$R/logs/transitions.log" | tr -d ' ')" = 2 ]
+                [ "$(wc -l < "$R/proxy-calls" | tr -d ' ')" = 1 ]
+            fi
             [ ! -s "$WORK/stderr" ]
+            [ "$scenario" != proxy-repair-orphan ] || [ ! -s "$R/config/system-proxy" ]
+            ;;
+        proxy-repair-failure)
+            [ "$result" -ne 0 ]
+            [ -s "$R/config/system-proxy" ]
+            grep -q '^stopping CLEANUP_FAILED$' "$R/state/status"
+            ;;
+        *proxy-failure)
+            [ "$result" -ne 0 ]
+            [ -f "$R/state/owned" ] && [ -f "$R/state/proxy.json" ]
+            [ "$(cat "$R/state/owned.boot")" = previous-boot ]
+            grep -q '^stopping CLEANUP_FAILED$' "$R/state/status"
+            grep -q 'root-runtime: step=restore-proxy ' "$WORK/stderr"
+            [ "$scenario" != reconcile-previous-proxy-failure ] || [ "$(cat "$R/run/boot-id")" = previous-boot ]
+            ;;
+        proxy-repair-live|proxy-repair-live-failure|proxy-repair-booting)
+            [ ! -f "$R/state/status" ] && [ ! -f "$R/run/stop" ] && [ ! -f "$R/run/owner.lock" ]
+            if [ "$scenario" = proxy-repair-live ]; then
+                [ "$result" -eq 0 ] && [ "$(cat "$R/proxy-calls")" = restore ]
+                [ ! -s "$R/config/system-proxy" ] && [ ! -f "$R/state/proxy.json" ]
+                grep -q '^proxy-repair:verified$' "$WORK/stdout"
+            elif [ "$scenario" = proxy-repair-booting ]; then
+                [ "$result" -eq 0 ] && [ ! -f "$R/proxy-calls" ]
+                [ -s "$R/config/system-proxy" ] && [ -f "$R/state/proxy.json" ]
+                grep -q '^proxy-repair:deferred$' "$WORK/stdout"
+            else
+                [ "$result" -ne 0 ] && [ -s "$R/config/system-proxy" ] && [ -f "$R/state/proxy.json" ]
+                ! grep -q '^proxy-repair:verified$' "$WORK/stdout"
+            fi
+            ;;
+        reconcile-current|reconcile-active|reconcile-booting)
+            [ "$result" -eq 0 ]
+            [ ! -f "$R/state/status" ]
+            [ -f "$R/state/owned" ]
+            [ ! -f "$R/run/stop" ] && [ ! -f "$R/run/owner.lock" ]
+            if [ "$scenario" = reconcile-booting ]; then
+                grep -q '^boot-reconcile:deferred$' "$WORK/stdout"
+                export CASE=reconcile-finished
+                sh "$WORK/current-runtime.sh" reconcile-boot
+                grep -q '^disabled ' "$R/state/status"
+                [ ! -f "$R/run/boot-id" ]
+                [ "$(cat "$R/config/autostart-enabled")" = 1 ]
+            fi
             ;;
         *)
             [ "$result" -ne 0 ]
@@ -123,6 +208,7 @@ for scenario in incomplete stale-script missing-table missing-ipv6-nat previous-
             case "$scenario" in
                 missing-ipv4-nat|denied-nat|denied-ipv6-nat|broken-ipv6-nat) expected=inspect-firewall ;;
                 occupied-nat) expected=reserved-chain ;;
+                reconcile-reserved) expected=reserved-rules ;;
             esac
             [ "$scenario" != unsafe-tree ] || expected=safe-tree
             grep -q "root-runtime: step=$expected " "$WORK/stderr"

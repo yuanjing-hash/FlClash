@@ -5,6 +5,8 @@ WORK=$(mktemp -d)
 trap 'rm -rf "$WORK"' EXIT
 R=$WORK/runtime
 export R FAKE_NET="$WORK/net" TMPDIR="$WORK" PATH="$WORK/bin:$PATH"
+OTA_SOURCE=$(cat "$TESTS/../../app/src/main/assets/root-tun/ota-diagnostics.sh")
+export OTA_SOURCE
 REAL_ID=$(command -v id)
 export REAL_ID
 mkdir -p "$R/logs" "$R/tmp" "$R/config" "$R/state" "$R/scripts" "$WORK/net" "$WORK/bin" "$WORK/service.d"
@@ -13,6 +15,9 @@ printf '%s\n' 'header: 85 83 75 127 3 0 0 0' > "$R/logs/allowlist-denied.txt"
 printf '%s\n' 'notification code=AUTOSTART_FAILED exit=0' > "$R/logs/notification-last.txt"
 printf '%s\n' 10000 > "$R/config/app.uid"
 printf '%s\n' kernelsu > "$R/config/root.manager"
+printf '%s\n' '{"applied":{"host":"127.0.0.1","port":7890}}' > "$R/state/proxy.json"
+printf 'ntp:\n  enable: true\n  write-to-system: false\n  password: must-not-collect\nproxies:\n  secret: must-not-collect\n' > "$R/config/config.yaml"
+printf '%s\n' 'NTP service start, sync system time is false' > "$R/logs/core.log"
 for stub in ip iptables-save ip6tables-save settings nc pm; do ln -s "$TESTS/network-stub.sh" "$WORK/bin/$stub"; done
 cat > "$WORK/bin/am" <<'AM'
 #!/bin/sh
@@ -36,6 +41,7 @@ cat > "$WORK/bin/getprop" <<'PROP'
 #!/bin/sh
 echo diagnostic-property
 PROP
+for stub in pidof logcat; do printf '#!/bin/sh\nexit 0\n' > "$WORK/bin/$stub"; done
 chmod +x "$WORK/bin/"*
 sed -e "s|^R=/data/adb/flclash-root$|R=$R|" -e "s|/data/adb/service.d|$WORK/service.d|g" \
     "$TESTS/../../app/src/main/assets/root-tun/diagnostics.sh" > "$WORK/diagnostics.sh"
@@ -51,9 +57,17 @@ grep -q 'stage=user_unlocked elapsedMs=1234' "$WORK/evidence"
 grep -q 'header: 85 83 75 127' "$WORK/evidence"
 grep -q 'notification code=AUTOSTART_FAILED exit=0' "$WORK/evidence"
 grep -q 'am-exit=137' "$WORK/evidence"
-for item in clock boot-state tools boot-evidence auth-data package device grep processes directories runtime-state notifications ipv4 ipv6 routing-options capture-counters iptables ip6tables nft selinux connectivity restore-diff baseline logs; do
+for item in clock boot-state tools boot-evidence auth-data package ota-properties clock-policy ota-errors device grep processes directories runtime-state proxy-state notifications ipv4 ipv6 routing-options capture-counters iptables ip6tables nft selinux connectivity restore-diff baseline logs; do
     grep -q "^$item exit=" "$WORK/evidence"
 done
+grep -q 'ro.bootimage.build.date.utc=diagnostic-property' "$WORK/evidence"
+grep -q 'ro.build.date.utc=diagnostic-property' "$WORK/evidence"
+grep -q '"host":"127.0.0.1","port":7890' "$WORK/evidence"
+grep -q 'write-to-system: false' "$WORK/evidence"
+grep -q 'NTP service start, sync system time is false' "$WORK/evidence"
+grep -q 'ota-errors exit=3 timeout=no truncated=no .*status=failed' "$WORK/evidence"
+grep -q 'NO_OTA_LOG_SOURCES' "$WORK/evidence"
+! grep -q must-not-collect "$WORK/evidence"
 [ "$(wc -c < "$WORK/evidence")" -lt 4194304 ]
 [ "$(find "$WORK" -name 'root-diagnostics.*' | wc -l)" -eq 0 ]
 echo 'PASS diagnostics: all items manifested, am timeout and nft truncation recorded; boot/revocation evidence retained without su'

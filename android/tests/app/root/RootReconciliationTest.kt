@@ -12,6 +12,25 @@ class RootReconciliationTest {
     private val granted = RootStatus("kernelsu", "granted")
 
     @Test
+    fun onlyAnExplicitPreviousBootReportRequestsCleanupAndAStoppedReportClearsTheOldError() {
+        assertFalse(RootReconciliation.requiresBootCleanup(null))
+        assertFalse(RootReconciliation.requiresBootCleanup(ShellResult(1, "stopping CLEANUP_FAILED\n", "")))
+        assertFalse(RootReconciliation.requiresBootCleanup(ShellResult(0, "running -\nruntime-boot:current\n", "")))
+        assertTrue(RootReconciliation.requiresBootCleanup(ShellResult(1, "stopping CLEANUP_FAILED\nruntime-boot:previous\n", "")))
+        val stopped =
+            RootReconciliation.checked(
+                cached.copy(state = TunState.STOPPING, lastErrorCode = RootCode.CLEANUP_FAILED.name, lastErrorAt = 123L),
+                granted,
+                ShellResult(1, "disabled -\nautostart:no\n", ""),
+            )
+        assertEquals(TunState.DISABLED, stopped.state)
+        assertFalse(stopped.autostartEnabled)
+        assertFalse(stopped.stale)
+        assertNull(stopped.lastErrorCode)
+        assertNull(stopped.lastErrorAt)
+    }
+
+    @Test
     fun reattachingAnExistingCorePreservesItsRuntimeAndANewCoreResetsIt() {
         val previous = cached.copy(state = TunState.STARTING, startedAt = 1_000L, warnings = listOf(RootCode.CLEANUP_FAILED.name))
         val attached = RootReconciliation.running(previous, installed = false, status = "running -\nautostart:no", now = 9_000L)
@@ -120,10 +139,15 @@ class RootReconciliationTest {
     }
 
     @Test
-    fun restorationDifferenceRemainsVisibleAfterReconciliation() {
+    fun networkSnapshotDifferencesDoNotFailSuccessfulCleanupAndRealCleanupFailuresRemainVisible() {
         val checked = RootReconciliation.checked(cached, granted, ShellResult(1, "disabled -\nrestore-diff:yes\nautostart:no", ""))
-        assertTrue(RootCode.CLEANUP_FAILED.name in checked.warnings)
+        assertEquals(TunState.DISABLED, checked.state)
+        assertNull(checked.lastErrorCode)
+        assertFalse(RootCode.CLEANUP_FAILED.name in checked.warnings)
         assertFalse(checked.stale)
+        val failed = RootReconciliation.checked(cached, granted, ShellResult(1, "stopping CLEANUP_FAILED\nrestore-diff:yes", ""))
+        assertEquals(TunState.STOPPING, failed.state)
+        assertEquals(RootCode.CLEANUP_FAILED.name, failed.lastErrorCode)
     }
 
     @Test

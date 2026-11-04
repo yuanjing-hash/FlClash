@@ -4,7 +4,9 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/features/form/form.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/models/root_tun.dart';
 import 'package:fl_clash/providers/config.dart';
+import 'package:fl_clash/providers/root_tun.dart';
 import 'package:fl_clash/views/config/override.dart';
 import 'package:fl_clash/views/config/root_tun.dart';
 import 'package:fl_clash/views/config/tun.dart';
@@ -67,8 +69,13 @@ class VPNItem extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, ref) {
+    final rootMode = ref.watch(
+      rootTunControllerProvider.select(
+        (state) => state.snapshot?.mode == RootTunMode.rootTun,
+      ),
+    );
     return _vpnToggle(
-      title: (l) => 'VPN',
+      title: (l) => rootMode ? l.rootTun : 'VPN',
       select: (state) => state.enable,
       update: (state, value) => state.copyWith(enable: value),
     );
@@ -504,6 +511,11 @@ class VpnSections extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final appLocalizations = context.appLocalizations;
+    final rootMode = ref.watch(
+      rootTunControllerProvider.select(
+        (state) => state.snapshot?.mode == RootTunMode.rootTun,
+      ),
+    );
     final authenticationEnable = ref.watch(
       networkSettingProvider.select((state) => state.authentication.enable),
     );
@@ -511,21 +523,25 @@ class VpnSections extends ConsumerWidget {
       children: [
         generateSection(
           items: const [VPNItem()],
-          footer: appLocalizations.vpnEnableDesc,
+          footer: rootMode
+              ? appLocalizations.rootTunSystemProxyDesc
+              : appLocalizations.vpnEnableDesc,
         ),
         generateSection(
-          title: 'VPN',
-          items: const [
-            VpnSystemProxyItem(),
-            BypassDomainItem(),
-            AllowBypassItem(),
-            Ipv6Item(),
-            DNSHijackingItem(),
+          title: rootMode ? appLocalizations.rootTun : 'VPN',
+          items: [
+            if (!rootMode) ...[
+              const VpnSystemProxyItem(),
+              const BypassDomainItem(),
+            ],
+            const AllowBypassItem(),
+            const Ipv6Item(),
+            const DNSHijackingItem(),
           ],
           footer: [
-            if (authenticationEnable)
+            if (!rootMode && authenticationEnable)
               appLocalizations.authenticationSystemProxyDesc,
-            appLocalizations.bypassDomainDesc,
+            if (!rootMode) appLocalizations.bypassDomainDesc,
             appLocalizations.ipv6InboundDesc,
           ].join('\n'),
         ),

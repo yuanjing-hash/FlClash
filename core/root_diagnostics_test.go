@@ -18,6 +18,7 @@ import (
 func TestRootDiagnosticReportsActualGlobalSelectionAndKeepsCredentialsPrivate(t *testing.T) {
 	raw := config.DefaultRawConfig()
 	raw.DNS.Enable = false
+	raw.NTP.Enable = true
 	raw.Proxy = []map[string]any{{"name": "node-a", "type": "direct"}, {"name": "node-b", "type": "direct"}}
 	raw.ProxyGroup = []map[string]any{
 		{"name": "choice", "type": "select", "proxies": []string{"node-a", "node-b"}},
@@ -41,6 +42,9 @@ func TestRootDiagnosticReportsActualGlobalSelectionAndKeepsCredentialsPrivate(t 
 	}
 	if state["dnsEnabled"] != false || state["proxyCount"] != len(cfg.Proxies) {
 		t.Fatal("live settings lost", state)
+	}
+	if state["ntpEnabled"] != true || state["ntpWriteToSystem"] != false {
+		t.Fatal("live system time policy lost", state)
 	}
 	data, err := json.Marshal(state)
 	if err != nil || strings.Contains(string(data), "never-export") {

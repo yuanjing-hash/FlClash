@@ -445,7 +445,7 @@ jobs:
           find dist -type f -name '*.apk' -exec cp -t apks {} +
           version=$(sed -n 's/^version: \([^+]*\)+.*/\1/p' pubspec.yaml)
           for abi in arm64-v8a x86_64; do
-            test -f "apks/FlClash-$version-android-$abi.apk"
+            test -f "apks/FlClash-TUN-$version-android-$abi.apk"
           done
           if [[ "$SIGNED" != true ]]; then
             for apk in apks/*.apk; do
@@ -529,7 +529,7 @@ jobs:
       - name: Release Android APKs
         uses: softprops/action-gh-release@v2
         with:
-          name: FlClash TUN ${{ github.ref_name }}
+          name: FlClash-TUN ${{ github.ref_name }}
           files: |
             ./dist/*.apk
             ./dist/SHA256SUMS

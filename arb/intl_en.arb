@@ -941,6 +941,8 @@
   "allReferencedProxies": "All referenced proxies",
   "allReferencedProxyProviders": "All referenced proxy providers",
   "rootTun": "Root TUN",
+  "rootTunSystemProxyDesc": "Root TUN routes traffic by app and does not set a global HTTP proxy. System proxy and bypass domains apply only in VPN mode.",
+  "rootTunPerAppDnsDesc": "With DNS enabled, Root TUN with per-app access control uses real IP DNS (redir-host). The DNS mode saved here remains available for VPN and Root TUN without per-app access control. Restart the proxy after changing per-app settings.",
   "rootTunStateDisabled": "Disabled",
   "rootTunStateAwaitingAuth": "Awaiting authorization",
   "rootTunStateStarting": "Starting",

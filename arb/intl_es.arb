@@ -941,6 +941,8 @@
   "allReferencedProxies": "Todos los proxies referenciados",
   "allReferencedProxyProviders": "Todos los proveedores de proxies referenciados",
   "rootTun": "Root TUN",
+  "rootTunSystemProxyDesc": "Root TUN enruta el tráfico por aplicación sin configurar un proxy HTTP global. El proxy del sistema y los dominios excluidos solo se aplican en modo VPN.",
+  "rootTunPerAppDnsDesc": "Con DNS activado, con el control por aplicación, Root TUN utiliza DNS con IP reales (redir-host). El modo DNS guardado aquí se conserva para VPN y Root TUN sin control por aplicación. Reinicia el proxy tras cambiar estos ajustes.",
   "rootTunStateDisabled": "Disabled",
   "rootTunStateAwaitingAuth": "Awaiting authorization",
   "rootTunStateStarting": "Starting",

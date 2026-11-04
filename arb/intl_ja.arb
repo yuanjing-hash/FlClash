@@ -941,6 +941,8 @@
   "allReferencedProxies": "参照されているすべてのプロキシ",
   "allReferencedProxyProviders": "参照されているすべてのプロキシプロバイダー",
   "rootTun": "Root TUN",
+  "rootTunSystemProxyDesc": "Root TUN はアプリごとのルーティングで通信を処理し、グローバル HTTP プロキシを設定しません。システムプロキシと除外ドメインは VPN モードでのみ使用します。",
+  "rootTunPerAppDnsDesc": "DNS が有効な場合、Root TUN でアプリ別アクセス制御を有効にすると、実際には実 IP DNS（redir-host）を使用します。ここに保存した DNS モードは VPN とアプリ別制御のない Root TUN で使用されます。アプリ別設定の変更後はプロキシを再起動してください。",
   "rootTunStateDisabled": "Disabled",
   "rootTunStateAwaitingAuth": "Awaiting authorization",
   "rootTunStateStarting": "Starting",

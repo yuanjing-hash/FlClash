@@ -3,7 +3,10 @@ import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/features/form/form.dart';
 import 'package:fl_clash/l10n/l10n.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/models/root_tun.dart';
 import 'package:fl_clash/pages/editor.dart';
+import 'package:fl_clash/providers/config.dart';
+import 'package:fl_clash/providers/root_tun.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/views/config/override.dart';
 import 'package:fl_clash/widgets/widgets.dart';
@@ -118,42 +121,52 @@ ProfileOverrides _setProfileDns(ProfileOverrides overrides, _DnsState state) =>
 
 String _patchDnsDescription(AppLocalizations l) => l.dnsOverrideDesc;
 
-class DnsView extends OverrideView<DnsOverrideKey, Dns> {
+class DnsView extends ConsumerWidget {
   /// The keys written over the DNS of every subscription and file profile.
-  const DnsView({super.key})
-    : super(
-        spec: const _DnsOverrideSpec(
-          PatchOverrideTarget(
-            get: _patchDns,
-            set: _setPatchDns,
-            description: _patchDnsDescription,
-          ),
-          keys: DnsOverrideKey.normalProfileKeys,
-        ),
-      );
+  const DnsView({super.key, this.isAndroid}) : profileId = null;
 
-  DnsView.profile(int profileId, {super.key})
-    : super(
-        spec: _ProfileDnsOverrideSpec(
-          ProfileOverrideTarget(
-            profileId,
-            get: _profileDns,
-            set: _setProfileDns,
-            issues: customProfileIssuesProvider(
-              profileId,
-            ).select((state) => state.dns),
-          ),
-        ),
-      );
+  const DnsView.profile(int this.profileId, {super.key, this.isAndroid});
+
+  final int? profileId;
+  final bool? isAndroid;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final profileId = this.profileId;
+    return OverrideView(
+      spec: profileId == null
+          ? _DnsOverrideSpec(
+              const PatchOverrideTarget(
+                get: _patchDns,
+                set: _setPatchDns,
+                description: _patchDnsDescription,
+              ),
+              keys: DnsOverrideKey.normalProfileKeys,
+              isAndroid: isAndroid,
+            )
+          : _ProfileDnsOverrideSpec(
+              ProfileOverrideTarget(
+                profileId,
+                get: _profileDns,
+                set: _setProfileDns,
+                issues: customProfileIssuesProvider(
+                  profileId,
+                ).select((state) => state.dns),
+              ),
+              isAndroid: isAndroid,
+            ),
+    );
+  }
 }
 
 class _DnsOverrideSpec extends OverrideSpec<DnsOverrideKey, Dns> {
-  const _DnsOverrideSpec(this.target, {this.keys});
+  const _DnsOverrideSpec(this.target, {this.keys, this.isAndroid});
 
   @override
   final OverrideTarget<DnsOverrideKey, Dns> target;
 
   final Set<DnsOverrideKey>? keys;
+  final bool? isAndroid;
 
   @override
   String title(AppLocalizations l) => 'DNS';
@@ -176,6 +189,25 @@ class _DnsOverrideSpec extends OverrideSpec<DnsOverrideKey, Dns> {
 
   @override
   ConfigLabel? description(DnsOverrideKey key) => key.description;
+
+  @override
+  String pageDescription(AppLocalizations l, WidgetRef ref) {
+    final description = super.pageDescription(l, ref);
+    if (!(isAndroid ?? system.isAndroid)) return description;
+    final root = ref.watch(
+      rootTunControllerProvider.select((state) => state.snapshot),
+    );
+    final perApp = ref.watch(
+      vpnSettingProvider.select(
+        (state) => state.enable && state.accessControlProps.enable,
+      ),
+    );
+    return root?.mode == RootTunMode.rootTun &&
+            root?.rootTunEnabled == true &&
+            perApp
+        ? '${l.rootTunPerAppDnsDesc}\n\n$description'
+        : description;
+  }
 
   @override
   OverrideField<Dns> fieldOf(DnsOverrideKey key) => switch (key) {
@@ -329,7 +361,7 @@ class _DnsOverrideSpec extends OverrideSpec<DnsOverrideKey, Dns> {
 
 class _ProfileDnsOverrideSpec extends _DnsOverrideSpec
     with OverrideQuickEdit<DnsOverrideKey, Dns> {
-  const _ProfileDnsOverrideSpec(super.target);
+  const _ProfileDnsOverrideSpec(super.target, {super.isAndroid});
 
   @override
   String overrideYaml(Dns model, Set<DnsOverrideKey> keys) =>

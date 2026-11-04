@@ -1704,6 +1704,9 @@ class MessageLookup extends MessageLookupByLibrary {
     ),
     "rootTunOff": MessageLookupByLibrary.simpleMessage("Off"),
     "rootTunOpenManager": MessageLookupByLibrary.simpleMessage("Open manager"),
+    "rootTunPerAppDnsDesc": MessageLookupByLibrary.simpleMessage(
+      "Lorsque le DNS est activé, avec le contrôle par application, Root TUN utilise un DNS à IP réelles (redir-host). Le mode DNS enregistré ici reste utilisé par le VPN et Root TUN sans contrôle par application. Redémarrez le proxy après toute modification de ces réglages.",
+    ),
     "rootTunRecheck": MessageLookupByLibrary.simpleMessage("Check again"),
     "rootTunStale": MessageLookupByLibrary.simpleMessage(
       "Vérification de l’état en cours. Vous pouvez revérifier ou arrêter Root TUN.",
@@ -1721,6 +1724,9 @@ class MessageLookup extends MessageLookupByLibrary {
     "rootTunStateStarting": MessageLookupByLibrary.simpleMessage("Starting"),
     "rootTunStateStopping": MessageLookupByLibrary.simpleMessage(
       "Stopping / cleaning up",
+    ),
+    "rootTunSystemProxyDesc": MessageLookupByLibrary.simpleMessage(
+      "Root TUN achemine le trafic par application sans définir de proxy HTTP global. Le proxy système et les domaines exclus ne concernent que le mode VPN.",
     ),
     "rootTunTimeout": MessageLookupByLibrary.simpleMessage(
       "The native response timed out; the command was not cancelled. Refresh state before toggling again.",
