@@ -678,7 +678,7 @@ supervise() {
             if [ "$round_elapsed" -gt 1500 ]; then runtime_log supervisor "slow round elapsedMs=$round_elapsed"; fi
             sleep 1
         done
-        runtime_log supervisor "session ending code=${final_code:-USER_STOP}"
+        runtime_log supervisor "session ending code=${final_code:--}"
         publish stopping "${final_code:--}"
         if cleanup; then
             if [ -n "$final_code" ]; then publish failed "$final_code"; else publish disabled; fi
