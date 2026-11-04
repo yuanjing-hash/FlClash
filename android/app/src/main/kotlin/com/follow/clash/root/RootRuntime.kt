@@ -80,7 +80,11 @@ internal class RootRuntime(
                     .Gson()
                     .fromJson(previous.stdout, VpnOptions::class.java)
             }.getOrNull()
-        if (previous.success && requested != null && requested == applied && attach(manager, authChannel())) return true
+        if (previous.success && requested != null && requested == applied && attach(manager, authChannel())) {
+            startPhase = "reattach-existing-core"
+            RootShell.note("Reattached existing Root Core without relaunch")
+            return true
+        }
         startPhase = "cleanup-previous-runtime"
         stopResult("cleanup").requireSuccess("Clean previous root runtime")
         if (!allowed()) return false

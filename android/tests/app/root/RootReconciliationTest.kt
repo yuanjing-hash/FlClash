@@ -12,6 +12,21 @@ class RootReconciliationTest {
     private val granted = RootStatus("kernelsu", "granted")
 
     @Test
+    fun reattachingAnExistingCorePreservesItsRuntimeAndANewCoreResetsIt() {
+        val previous = cached.copy(state = TunState.STARTING, startedAt = 1_000L, warnings = listOf(RootCode.CLEANUP_FAILED.name))
+        val attached = RootReconciliation.running(previous, installed = false, status = "running -\nautostart:no", now = 9_000L)
+        assertEquals(TunState.RUNNING, attached.state)
+        assertEquals(1_000L, attached.startedAt)
+        assertTrue(attached.warnings.isEmpty())
+        assertFalse(attached.autostartEnabled)
+        val restarted = RootReconciliation.running(previous, installed = true, status = "running -\nautostart:yes", now = 9_000L)
+        assertEquals(9_000L, restarted.startedAt)
+        assertTrue(restarted.autostartEnabled)
+        val unknown = RootReconciliation.running(previous.copy(startedAt = null), installed = false, status = "running -", now = 9_000L)
+        assertEquals(9_000L, unknown.startedAt)
+    }
+
+    @Test
     fun freshInstallAllowsCommandsAndPersistedStateRequiresReconciliation() {
         assertFalse(RootReconciliation.initial(null).stale)
         val restored = RootReconciliation.initial(cached)

@@ -565,13 +565,7 @@ internal class RootTunController(
                 }
                 report(
                     revision,
-                    snapshot.copy(
-                        state = TunState.RUNNING,
-                        warnings = snapshot.warnings.filterNot { it == RootCode.CLEANUP_FAILED.name },
-                        startedAt = System.currentTimeMillis(),
-                        autostartEnabled =
-                            "autostart:yes" in status.stdout,
-                    ),
+                    RootReconciliation.running(snapshot, runtime.didInstall, status.stdout),
                     requestId = requestId,
                 )
                 startMonitor()

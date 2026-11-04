@@ -138,10 +138,12 @@ class ServicePlugin :
         result: MethodChannel.Result,
     ) {
         commandRevision = call.arguments as? Int ?: commandRevision
+        val revision = commandRevision
         val started = ServiceState.requestStart()
         result.success(true)
         scope.launch {
-            if (!started.await()) notifyRunTimeChanged()
+            started.await()
+            notifyRunTimeChanged(revision)
         }
     }
 
@@ -163,9 +165,10 @@ class ServicePlugin :
         }
     }
 
-    fun notifyRunTimeChanged() {
+    fun notifyRunTimeChanged(expectedRevision: Int? = null) {
         scope.launch(Dispatchers.Main) {
-            val revision = commandRevision
+            val revision = expectedRevision ?: commandRevision
+            if (revision != commandRevision) return@launch
             val startedAt = ServiceState.awaitRunTime()
             if (revision == commandRevision) {
                 channel.invokeMethod("runTime", mapOf("revision" to revision, "startedAt" to startedAt))

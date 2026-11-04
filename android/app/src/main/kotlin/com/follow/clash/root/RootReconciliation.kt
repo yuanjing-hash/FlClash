@@ -6,6 +6,19 @@ internal object RootReconciliation {
     fun initial(persisted: RootSnapshot?): RootSnapshot =
         persisted?.copy(epoch = UUID.randomUUID().toString(), seq = 0, stale = true) ?: RootSnapshot()
 
+    fun running(
+        cached: RootSnapshot,
+        installed: Boolean,
+        status: String,
+        now: Long = System.currentTimeMillis(),
+    ): RootSnapshot =
+        cached.copy(
+            state = TunState.RUNNING,
+            warnings = cached.warnings.filterNot { it == RootCode.CLEANUP_FAILED.name },
+            startedAt = cached.startedAt.takeUnless { installed } ?: now,
+            autostartEnabled = "autostart:yes" in status,
+        )
+
     fun missing(
         cached: RootSnapshot,
         graceExpired: Boolean = false,
