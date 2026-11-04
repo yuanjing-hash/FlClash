@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.6 (2026-11-05)
+
+**Bug Fixes**
+
+- **android** Keep Root TUN connected across network changes and independent of the VPN toggle (d9c64ff)
+
 ## v1.1.4 (2026-11-04)
 
 **Bug Fixes**
@@ -486,7 +492,7 @@
 - Update core
 - Optimize more details
 - Merge pull request #140 from txyyh/main
-- 添加自建 F-Droid 仓库相关 workflow
+- 娣诲姞鑷缓 F-Droid 浠撳簱鐩稿叧 workflow
 - Rename readme fingerprint
 - Rename workflow deploy repo name
 - Add download guide to README
