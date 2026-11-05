@@ -498,6 +498,9 @@ cleanup() {
                 done
                 "$tool" -w 1 -t nat -F mihomo-output || cleanup_ok=0
                 "$tool" -w 1 -t nat -X mihomo-output || cleanup_ok=0
+            elif [ "$redirect" = '-N mihomo-output' ] && [ -f "$STATE/baseline.$tool" ] &&
+                ! grep -q '^:mihomo-output ' "$STATE/baseline.$tool"; then
+                "$tool" -w 1 -t nat -X mihomo-output || cleanup_ok=0
             else
                 runtime_error cleanup-redirect 'mihomo-output is not owned by flcrtun0'
                 cleanup_ok=0
@@ -551,6 +554,15 @@ network_intact() {
     [ "$(cat "$R/config/tun.enabled" 2>/dev/null)" != 0 ] || return 0
     ip -4 route show table 2022 | grep -q flcrtun0 &&
         iptables -w 1 -C OUTPUT -j FCR_OUTPUT && ip6tables -w 1 -C OUTPUT -j FCR_OUTPUT
+}
+
+refresh_health() {
+    rm -f "$RUN/healthy"
+    health_failure_code=START_TIMEOUT
+    if core_healthy; then
+        health_failure_code=NETWORK_RULES_APPLY_FAILED
+        if configure_routes && network_intact; then touch "$RUN/healthy"; fi
+    fi
 }
 
 supervise() {
@@ -642,13 +654,8 @@ supervise() {
                 if ! launch_core; then final_code=CORE_RECOVERY_FAILED; break; fi
                 deadline=$recovery_deadline
             fi
-            rm -f "$RUN/healthy"
-            if core_healthy; then touch "$RUN/healthy"; fi
+            refresh_health
             if [ -f "$RUN/healthy" ]; then
-                if ! network_intact && ! configure_routes; then
-                    final_code=NETWORK_RULES_APPLY_FAILED
-                    break
-                fi
                 current=$(cat "$STATE/status")
                 case "$current" in
                     recovering*)
@@ -659,14 +666,10 @@ supervise() {
                     starting*) publish running ;;
                 esac
                 deadline=$((now + 26))
-                if ! network_intact; then
-                    final_code=NETWORK_RULES_APPLY_FAILED
-                    break
-                fi
             elif [ "$now" -ge "$deadline" ]; then
                 case "$(cat "$STATE/status")" in
                     recovering*) final_code=CORE_RECOVERY_FAILED ;;
-                    *) final_code=START_TIMEOUT ;;
+                    *) final_code=$health_failure_code ;;
                 esac
                 break
             fi
@@ -675,6 +678,7 @@ supervise() {
             if [ "$round_elapsed" -gt 1500 ]; then runtime_log supervisor "slow round elapsedMs=$round_elapsed"; fi
             sleep 1
         done
+        runtime_log supervisor "session ending code=${final_code:--}"
         publish stopping "${final_code:--}"
         if cleanup; then
             if [ -n "$final_code" ]; then publish failed "$final_code"; else publish disabled; fi

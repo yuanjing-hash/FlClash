@@ -1,5 +1,12 @@
 # Changelog
 
+## v1.1.8 (2026-11-05)
+
+**Bug Fixes**
+
+- **android** Prevent Android service stop reports from issuing a new Root TUN stop command (102e7e5)
+- **android** Recover Android 17 proxy cleanup and preserve Root TUN across transient network changes (37af16f)
+
 ## v1.1.6 (2026-11-05)
 
 **Bug Fixes**

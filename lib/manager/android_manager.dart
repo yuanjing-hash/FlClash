@@ -4,6 +4,7 @@ import 'package:fl_clash/common/common.dart';
 import 'package:fl_clash/core/core.dart';
 import 'package:fl_clash/enum/enum.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/models/root_tun.dart';
 import 'package:fl_clash/plugins/app.dart';
 import 'package:fl_clash/plugins/service.dart';
 import 'package:fl_clash/providers/providers.dart';
@@ -90,7 +91,10 @@ class _AndroidContainerState extends ConsumerState<AndroidManager>
 
   @override
   void onServiceStopped() {
-    unawaited(ref.read(setupActionProvider.notifier).setRunning(false));
+    final snapshot = ref.read(rootTunControllerProvider).snapshot;
+    if (snapshot?.mode != RootTunMode.rootTun) {
+      ref.read(setupActionProvider.notifier).syncRunTime(null);
+    }
     super.onServiceStopped();
   }
 

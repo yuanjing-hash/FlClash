@@ -2,10 +2,12 @@ import 'dart:convert';
 
 import 'package:fl_clash/manager/android_manager.dart';
 import 'package:fl_clash/models/models.dart';
+import 'package:fl_clash/models/root_tun.dart';
 import 'package:fl_clash/plugins/service.dart';
 import 'package:fl_clash/providers/action.dart';
 import 'package:fl_clash/providers/config.dart';
 import 'package:fl_clash/providers/database.dart';
+import 'package:fl_clash/providers/root_tun.dart';
 import 'package:fl_clash/providers/state.dart';
 import 'package:fl_clash/state.dart';
 import 'package:material_ui/material_ui.dart';
@@ -16,6 +18,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../helpers/preferences.dart';
 import '../helpers/test_app.dart';
 import '../helpers/test_profiles.dart';
+import '../support/root_tun_controller.dart';
 
 class _RecordingSetupAction extends SetupAction {
   static final requests = <bool>[];
@@ -36,16 +39,19 @@ void main() {
 
   late ProviderContainer container;
   late SharedPreferences store;
+  late TestRootTunController rootTun;
 
   setUp(() async {
     await mockPreferences();
     store = await SharedPreferences.getInstance();
     _RecordingSetupAction.requests.clear();
     _RecordingSetupAction.runTimes.clear();
+    rootTun = TestRootTunController();
     container = ProviderContainer(
       overrides: [
         profilesProvider.overrideWith(TestProfiles.new),
         setupActionProvider.overrideWith(_RecordingSetupAction.new),
+        rootTunControllerProvider.overrideWith(() => rootTun),
         // Bypassing private addresses computes the routes in Isolate.run, which
         // the fake clock never lets finish.
         networkSettingProvider.overrideWithBuild(
@@ -53,6 +59,7 @@ void main() {
         ),
       ],
     );
+    container.listen(rootTunControllerProvider, (_, _) {});
     globalState.container = container;
   });
 
@@ -80,20 +87,61 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('a stop the service reports turns the running state off', (
+  testWidgets('mirrors a stopped VPN without requesting another stop', (
     tester,
   ) async {
     await pumpAndroidManager(tester);
+    rootTun.emit(
+      rootTun.initial.copyWith(
+        mode: RootTunMode.vpn,
+        state: RootTunState.running,
+      ),
+    );
     final listener =
         tester.state(find.byType(AndroidManager)) as ServiceListener;
 
     listener.onServiceStopped();
     await tester.pump();
 
-    expect(_RecordingSetupAction.requests, [false]);
+    expect(_RecordingSetupAction.requests, isEmpty);
+    expect(_RecordingSetupAction.runTimes, [null]);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  for (final state in [
+    RootTunState.starting,
+    RootTunState.running,
+    RootTunState.recovering,
+  ]) {
+    testWidgets('an embedded service stop cannot stop Root TUN while $state', (
+      tester,
+    ) async {
+      await pumpAndroidManager(tester);
+      rootTun.emit(
+        rootTun.initial.copyWith(
+          mode: RootTunMode.rootTun,
+          rootTunEnabled: true,
+          state: state,
+        ),
+      );
+      final listener =
+          tester.state(find.byType(AndroidManager)) as ServiceListener;
+
+      listener.onServiceStopped();
+      listener.onServiceStopped();
+      await tester.pump();
+
+      expect(_RecordingSetupAction.requests, isEmpty);
+      expect(_RecordingSetupAction.runTimes, isEmpty);
+      expect(rootTun.view.snapshot!.state, state);
+
+      listener.onServiceRunTimeChanged(null);
+      expect(_RecordingSetupAction.runTimes, [null]);
+      expect(_RecordingSetupAction.requests, isEmpty);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
 
   testWidgets('mirrors native root runtime without sending another command', (
     tester,
