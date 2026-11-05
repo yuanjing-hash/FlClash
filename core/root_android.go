@@ -121,7 +121,7 @@ func (r *rootTunRuntime) health() (bool, string) {
 	if r.err != nil {
 		return false, r.err.Error()
 	}
-	return r.configured && isRunning.Load() && (r.listener != nil || !r.options.Enable), ""
+	return r.configured && isRunning.Load() && r.listener != nil, ""
 }
 
 func RunRoot(path string, checkOnly bool) error {
@@ -144,6 +144,9 @@ func RunRoot(path string, checkOnly bool) error {
 	}
 	if _, err := rootTunConfig(launch.Tun); err != nil {
 		return err
+	}
+	if !launch.Tun.Enable {
+		return errors.New("Root TUN launch requires traffic capture")
 	}
 	if launch.Port < 1024 || launch.Port > 65535 || len(launch.Token) < 32 {
 		return errors.New("invalid root control endpoint")
@@ -351,6 +354,8 @@ func RunRoot(path string, checkOnly bool) error {
 		return fmt.Errorf("phase=root/create-tun: %s", detail)
 	}
 	fmt.Println("phase=root/ready")
+	stopNetworkMonitor := startRootNetworkMonitor()
+	defer stopNetworkMonitor()
 	networkChanged()
 	termination := make(chan os.Signal, 1)
 	signal.Notify(termination, os.Interrupt, syscall.SIGTERM)

@@ -640,7 +640,6 @@ internal class RootTunController(
         val noRuntime = !force && !runtimeMayExist
         val clean = noRuntime || runtime.stop()
         if (!current(revision)) return
-        val restoreWarning = !noRuntime && runtime.restoreDiffExists()
         if (!clean) {
             report(revision, snapshot.copy(state = TunState.STOPPING), RootCode.CLEANUP_FAILED, requestId)
             return
@@ -659,24 +658,7 @@ internal class RootTunController(
         }
         report(
             revision,
-            snapshot.copy(
-                state = TunState.DISABLED,
-                stale = false,
-                warnings = if (restoreWarning) listOf(RootCode.CLEANUP_FAILED.name) else emptyList(),
-                startedAt = null,
-                rootTunEnabled = if (disable || force) false else snapshot.rootTunEnabled,
-                mode =
-                    if (reason == "switchToVpn") {
-                        "vpn"
-                    } else if (disable || force) {
-                        "off"
-                    } else {
-                        snapshot.mode
-                    },
-                autostartEnabled = if (disable || force) false else snapshot.autostartEnabled,
-                lastErrorCode = null,
-                lastErrorAt = null,
-            ),
+            RootReconciliation.stopped(snapshot, disable || force, reason == "switchToVpn"),
             requestId = requestId,
         )
         if (disable || force) {

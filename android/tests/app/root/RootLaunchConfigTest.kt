@@ -9,6 +9,7 @@ import com.google.gson.Gson
 import com.google.gson.JsonParser
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class RootLaunchConfigTest {
@@ -47,7 +48,7 @@ class RootLaunchConfigTest {
     }
 
     @Test
-    fun blacklistKeepsAppControllableAndDisabledVpnStaysDisabled() {
+    fun blacklistKeepsAppControllableAndRootCaptureRunsWithVpnDisabled() {
         val options =
             options().copy(
                 enable = false,
@@ -73,7 +74,39 @@ class RootLaunchConfigTest {
                 exclude,
             )["perApp"],
         )
-        assertFalse(RootLaunchConfig.tun(options, include, exclude)["enable"] as Boolean)
+        assertTrue(RootLaunchConfig.tun(options, include, exclude)["enable"] as Boolean)
+    }
+
+    @Test
+    fun excludedBankAndIncludedChatgptUseBlacklistUidsEvenWhenVpnIsOff() {
+        val options =
+            options().copy(
+                enable = false,
+                accessControlProps =
+                    AccessControlProps(
+                        true,
+                        AccessControlMode.REJECT_SELECTED,
+                        listOf("com.openai.chatgpt"),
+                        listOf("com.android.bankabc"),
+                    ),
+            )
+        val packages = mapOf("com.android.bankabc" to 10314, "com.openai.chatgpt" to 10527)
+        val prepared =
+            RootLaunchConfig.prepare(
+                SharedState(vpnOptions = options, setupParams = SetupParams("https://example.test/ping", emptyMap(), true)),
+                10190,
+                packages::get,
+                emptyMap(),
+            )
+        val tun = prepared.launch.getValue("tun") as Map<*, *>
+        assertEquals(true, tun["enable"])
+        assertEquals(true, tun["perApp"])
+        assertEquals(emptyList<Int>(), tun["includeUid"])
+        assertEquals(listOf(10314), tun["excludeUid"])
+        assertEquals("10314", prepared.files["bypass.uids"])
+        assertEquals("1\n", prepared.files["tun.enabled"])
+        assertEquals("1\n", prepared.files["per-app-dns"])
+        assertEquals(options, Gson().fromJson(prepared.files["vpn-options.json"], VpnOptions::class.java))
     }
 
     @Test
@@ -119,8 +152,8 @@ class RootLaunchConfigTest {
             RootLaunchConfig.prepare(state.copy(vpnOptions = options().copy(enable = false, systemProxy = false)), 10190, {
                 null
             }, emptyMap())
-        assertEquals("0\n", changed.files["tun.enabled"])
-        assertEquals("0\n", changed.files["per-app-dns"])
+        assertEquals("1\n", changed.files["tun.enabled"])
+        assertEquals("1\n", changed.files["per-app-dns"])
         assertEquals("", changed.files["system-proxy"])
         assertFalse(prepared.files["vpn-options.json"] == changed.files["vpn-options.json"])
         assertEquals(listOf("10000-10002", "10100"), RootLaunchConfig.bypassUidRanges(emptyList(), listOf(10002, 10000, 10100, 10001)))

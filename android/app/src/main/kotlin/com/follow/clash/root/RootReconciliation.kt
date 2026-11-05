@@ -8,6 +8,30 @@ internal object RootReconciliation {
     fun initial(persisted: RootSnapshot?): RootSnapshot =
         persisted?.copy(epoch = UUID.randomUUID().toString(), seq = 0, stale = true) ?: RootSnapshot()
 
+    fun stopped(
+        cached: RootSnapshot,
+        disabled: Boolean,
+        switchedToVpn: Boolean,
+    ): RootSnapshot =
+        cached.copy(
+            state = TunState.DISABLED,
+            stale = false,
+            warnings = emptyList(),
+            startedAt = null,
+            rootTunEnabled = if (disabled) false else cached.rootTunEnabled,
+            mode =
+                if (switchedToVpn) {
+                    "vpn"
+                } else if (disabled) {
+                    "off"
+                } else {
+                    cached.mode
+                },
+            autostartEnabled = if (disabled) false else cached.autostartEnabled,
+            lastErrorCode = null,
+            lastErrorAt = null,
+        )
+
     fun running(
         cached: RootSnapshot,
         installed: Boolean,

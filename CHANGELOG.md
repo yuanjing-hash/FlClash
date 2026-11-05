@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.6 (2026-11-05)
+
+**Bug Fixes**
+
+- **android** Keep Root TUN connected across network changes and independent of the VPN toggle (d9c64ff)
+
 ## v1.1.4 (2026-11-04)
 
 **Bug Fixes**

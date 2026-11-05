@@ -58,11 +58,11 @@ internal object RootLaunchConfig {
             launch,
             mapOf(
                 "vpn-options.json" to Gson().toJson(options),
-                "tun.enabled" to if (options.enable) "1\n" else "0\n",
+                "tun.enabled" to "1\n",
                 "ipv6.enabled" to if (options.ipv6) "1\n" else "0\n",
                 "allow-bypass" to if (options.allowBypass) "1\n" else "0\n",
                 "dns-hijacking" to if (options.dnsHijacking) "1\n" else "0\n",
-                "per-app-dns" to if (options.enable && options.accessControlProps.enable) "1\n" else "0\n",
+                "per-app-dns" to if (options.accessControlProps.enable) "1\n" else "0\n",
                 "bypass.uids" to bypassUidRanges(include, exclude).joinToString("\n"),
                 "routes4" to routes.filterNot { ':' in it }.joinToString("\n", postfix = "\n"),
                 "routes6" to routes.filter { ':' in it }.joinToString("\n", postfix = "\n"),
@@ -97,7 +97,7 @@ internal object RootLaunchConfig {
         require(options.stack in setOf("mips", "system", "gvisor", "mixed")) { "Unsupported TUN stack" }
         options.routeAddress.forEach(String::toCIDR)
         return mapOf(
-            "enable" to options.enable,
+            "enable" to true,
             "perApp" to options.accessControlProps.enable,
             "ipv6" to options.ipv6,
             "dnsHijacking" to options.dnsHijacking,

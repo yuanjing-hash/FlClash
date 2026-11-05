@@ -57,6 +57,8 @@ func rootNetworkState() map[string]any {
 		state["dnsEnabled"], state["dnsMode"] = cfg.DNS.Enable, cfg.DNS.EnhancedMode.String()
 		state["ntpEnabled"], state["ntpWriteToSystem"] = cfg.NTP.Enable, cfg.NTP.WriteToSystem
 		state["dnsHijack"] = cfg.General.Tun.DNSHijack
+		state["tunEnabled"], state["tunDevice"] = cfg.General.Tun.Enable, cfg.General.Tun.Device
+		state["includeUID"], state["excludeUID"] = cfg.General.Tun.IncludeUID, cfg.General.Tun.ExcludeUID
 		if cfg.Profile != nil {
 			state["storeFakeIP"] = cfg.Profile.StoreFakeIP
 			if cfg.Profile.StoreFakeIP && cfg.DNS.Enable && cfg.DNS.EnhancedMode == constant.DNSFakeIP {
