@@ -16,7 +16,8 @@ internal data class RootPreparedSettings(
 )
 
 internal object RootLaunchConfig {
-    private val systemDnsUids = listOf(0, 1051, 1052)
+    private const val SHARED_DNS_UID = 1051
+    private val systemDnsUids = listOf(0, 1052)
 
     fun systemDns(context: Context): List<String> {
         val connectivity = context.getSystemService(ConnectivityManager::class.java) ?: return emptyList()
@@ -83,9 +84,12 @@ internal object RootLaunchConfig {
         fun resolveAll(packages: List<String>): List<Int> = packages.mapNotNull(resolve).distinct().sorted()
         return when (access.mode) {
             AccessControlMode.ACCEPT_SELECTED ->
-                (resolveAll(access.acceptList) + systemDnsUids + appUid).distinct().sorted() to
+                (resolveAll(access.acceptList) + systemDnsUids + appUid).filter { it != SHARED_DNS_UID }.distinct().sorted() to
                     emptyList()
-            AccessControlMode.REJECT_SELECTED -> emptyList<Int>() to resolveAll(access.rejectList).filter { it != appUid }
+            AccessControlMode.REJECT_SELECTED -> {
+                val excluded = resolveAll(access.rejectList).filter { it != appUid }
+                emptyList<Int>() to if (excluded.isEmpty()) emptyList() else (excluded + SHARED_DNS_UID).distinct().sorted()
+            }
         }
     }
 
