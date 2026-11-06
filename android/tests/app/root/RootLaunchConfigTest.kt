@@ -30,10 +30,50 @@ class RootLaunchConfigTest {
         )
 
     @Test
+    fun sharedSystemDnsBypassesBothApplicationListModes() {
+        for (mode in listOf(AccessControlMode.ACCEPT_SELECTED, AccessControlMode.REJECT_SELECTED)) {
+            for (hijack in listOf(false, true)) {
+                val options =
+                    options().copy(
+                        dnsHijacking = hijack,
+                        accessControlProps = AccessControlProps(true, mode, listOf("proxied"), listOf("excluded")),
+                    )
+                val (include, exclude) =
+                    RootLaunchConfig.uids(options, 10190) {
+                        when (it) {
+                            "proxied" -> 10200
+                            "excluded" -> 10346
+                            else -> null
+                        }
+                    }
+
+                fun bypasses(uid: Int): Boolean =
+                    RootLaunchConfig.bypassUidRanges(include, exclude).any { range ->
+                        val ends = range.split('-').map(String::toInt)
+                        uid >= ends.first() && uid <= ends.last()
+                    }
+                assertTrue("Shared DNS must stay native in $mode with hijack=$hijack", bypasses(1051))
+                assertTrue(bypasses(10346))
+                assertFalse(bypasses(10200))
+                assertFalse(bypasses(10190))
+                val allApps = options.copy(accessControlProps = options.accessControlProps.copy(enable = false))
+                val (allInclude, allExclude) = RootLaunchConfig.uids(allApps, 10190) { 10346 }
+                assertEquals(emptyList<String>(), RootLaunchConfig.bypassUidRanges(allInclude, allExclude))
+                val noExclusions =
+                    options.copy(
+                        accessControlProps = AccessControlProps(true, AccessControlMode.REJECT_SELECTED, emptyList(), emptyList()),
+                    )
+                val (noInclude, noExclude) = RootLaunchConfig.uids(noExclusions, 10190) { null }
+                assertEquals(emptyList<String>(), RootLaunchConfig.bypassUidRanges(noInclude, noExclude))
+            }
+        }
+    }
+
+    @Test
     fun carriesUiTunnelSettingsAndResolvesApplicationAccessControl() {
         val options = options()
         val (include, exclude) = RootLaunchConfig.uids(options, 10190) { if (it == "app") 10200 else null }
-        assertEquals(listOf(0, 1051, 1052, 10190, 10200), include)
+        assertEquals(listOf(0, 1052, 10190, 10200), include)
         assertEquals(emptyList<Int>(), exclude)
         val tun = RootLaunchConfig.tun(options, include, exclude)
         assertEquals("mips", tun["stack"])
@@ -44,7 +84,7 @@ class RootLaunchConfigTest {
         assertEquals(false, tun["dnsHijacking"])
         assertEquals(options.routeAddress, tun["routeAddress"])
         assertEquals(include, tun["includeUid"])
-        assertEquals(listOf("1-1050", "1053-10189", "10191-10199", "10201-2147483647"), RootLaunchConfig.bypassUidRanges(include, exclude))
+        assertEquals(listOf("1-1051", "1053-10189", "10191-10199", "10201-2147483647"), RootLaunchConfig.bypassUidRanges(include, exclude))
     }
 
     @Test
@@ -64,8 +104,8 @@ class RootLaunchConfigTest {
                 }
             }
         assertEquals(emptyList<Int>(), include)
-        assertEquals(listOf(10200), exclude)
-        assertEquals(listOf("10200"), RootLaunchConfig.bypassUidRanges(include, exclude))
+        assertEquals(listOf(1051, 10200), exclude)
+        assertEquals(listOf("1051", "10200"), RootLaunchConfig.bypassUidRanges(include, exclude))
         assertEquals(
             false,
             RootLaunchConfig.tun(
@@ -102,8 +142,8 @@ class RootLaunchConfigTest {
         assertEquals(true, tun["enable"])
         assertEquals(true, tun["perApp"])
         assertEquals(emptyList<Int>(), tun["includeUid"])
-        assertEquals(listOf(10314), tun["excludeUid"])
-        assertEquals("10314", prepared.files["bypass.uids"])
+        assertEquals(listOf(1051, 10314), tun["excludeUid"])
+        assertEquals("1051\n10314", prepared.files["bypass.uids"])
         assertEquals("1\n", prepared.files["tun.enabled"])
         assertEquals("1\n", prepared.files["per-app-dns"])
         assertEquals(options, Gson().fromJson(prepared.files["vpn-options.json"], VpnOptions::class.java))

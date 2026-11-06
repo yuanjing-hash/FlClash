@@ -145,22 +145,22 @@ public final class RootProxyMain {
 
     private static void flushDns(Context context) throws Exception {
         boolean modern = android.os.Build.VERSION.SDK_INT >= 29;
-        String type = modern ? "android.net.IDnsResolver" : "android.net.INetd";
         Object binder = Class.forName("android.os.ServiceManager").getMethod("getService", String.class)
             .invoke(null, modern ? "dnsresolver" : "netd");
-        Object resolver = Class.forName(type + "$Stub").getMethod("asInterface", android.os.IBinder.class)
-            .invoke(null, binder);
-        java.lang.reflect.Method flush = Class.forName(type)
-            .getMethod(modern ? "flushNetworkCache" : "resolverFlushCacheForNet", int.class);
         ConnectivityManager manager = context.getSystemService(ConnectivityManager.class);
-        for (android.net.Network network : manager.getAllNetworks()) {
-            flush.invoke(resolver, (int) (network.getNetworkHandle() >>> 32));
+        RootDnsCache cache;
+        if (modern) {
+            cache = new RootDnsCache((android.os.IBinder) binder);
+        } else {
+            String type = "android.net.INetd";
+            Object resolver = Class.forName(type + "$Stub").getMethod("asInterface", android.os.IBinder.class)
+                .invoke(null, binder);
+            java.lang.reflect.Method flush = Class.forName(type).getMethod("resolverFlushCacheForNet", int.class);
+            cache = new RootDnsCache(networkId -> flush.invoke(resolver, networkId));
         }
-        android.content.Intent intent = new android.content.Intent("android.intent.action.CLEAR_DNS_CACHE")
-            .addFlags(android.content.Intent.FLAG_RECEIVER_REPLACE_PENDING | android.content.Intent.FLAG_RECEIVER_REGISTERED_ONLY);
-        Object users = android.os.UserHandle.class.getField("ALL").get(null);
-        Context.class.getMethod("sendBroadcastAsUser", android.content.Intent.class, android.os.UserHandle.class)
-            .invoke(context, intent, users);
+        int[] networkIds = Arrays.stream(manager.getAllNetworks())
+            .mapToInt(network -> (int) (network.getNetworkHandle() >>> 32)).toArray();
+        cache.flush(networkIds);
     }
 
     public static void main(String[] args) {
