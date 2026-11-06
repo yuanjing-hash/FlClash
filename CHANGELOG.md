@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.9 (2026-11-07)
+
+**Bug Fixes**
+
+- **android** Keep shared Android DNS outside per-app Root TUN capture and repair DNS cache refresh (43a57a3)
+
 ## v1.1.8 (2026-11-05)
 
 **Bug Fixes**
