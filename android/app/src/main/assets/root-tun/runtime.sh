@@ -419,7 +419,10 @@ flush_dns_cache() {
     [ "$(cat "$R/config/per-app-dns" 2>/dev/null)" = 1 ] || return 0
     if ! root_proxy flush-dns >> "$R/logs/launch.log" 2>&1; then
         runtime_log launch 'system DNS cache flush incomplete'
+    else
+        runtime_log launch 'system DNS cache refreshed'
     fi
+    return 0
 }
 
 update_private_dns() {
@@ -527,6 +530,7 @@ cleanup() {
     [ "$cleanup_ok" -eq 1 ] || { runtime_error remove-network 'owned network resources remain'; return 1; }
     compare_restoration || return 1
     rm -f "$STATE/owned" "$STATE/owned.boot"
+    flush_dns_cache
 }
 
 launch_core() {
@@ -535,7 +539,6 @@ launch_core() {
         mv "$R/logs/core.log" "$R/logs/core.log.1"
     fi
     rm -f "$RUN/core-ready"
-    flush_dns_cache
     "$CORE" --root-config "$R/config/root-core.json" >> "$R/logs/core.log" 2>&1 &
     core_pid=$!
     core_ticks=$(ticks "$core_pid")
@@ -657,6 +660,12 @@ supervise() {
             refresh_health
             if [ -f "$RUN/healthy" ]; then
                 current=$(cat "$STATE/status")
+                case "$current" in
+                    starting*|recovering*)
+                        flush_dns_cache
+                        owns && [ ! -f "$RUN/stop" ] || break
+                        ;;
+                esac
                 case "$current" in
                     recovering*)
                         runtime_log supervisor "recovery end bootSeconds=$now"

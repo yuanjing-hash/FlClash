@@ -41,12 +41,12 @@ echo 'PASS missing Core readiness is distinct from a pending network policy'
 
 sed -n '/^supervise() {/,/^}/p' "$TESTS/../../app/src/main/assets/root-tun/runtime.sh" > "$WORK/supervise.sh"
 . "$WORK/supervise.sh"
-for scenario in transient permanent; do (
+for scenario in transient permanent cancelled; do (
     R=$WORK/$scenario
     RUN=$R/run STATE=$R/state
     mkdir -p "$RUN" "$STATE" "$R/config"
     printf '0\n' > "$R/config/tun.enabled"
-    BOOT=test-boot IDENTITY='42 1 test-boot' round=0
+    BOOT=test-boot IDENTITY='42 1 test-boot' round=0 flushes=0
     claim_owner() { return 0; }
     owns() { return 0; }
     heartbeat() { return 0; }
@@ -58,6 +58,11 @@ for scenario in transient permanent; do (
     cleanup() { return 0; }
     unlock() { return 0; }
     update_private_dns() { return 0; }
+    flush_dns_cache() {
+        [ -f "$RUN/healthy" ] || exit 98
+        flushes=$((flushes + 1))
+        [ "$scenario" != cancelled ] || touch "$RUN/stop"
+    }
     core_healthy() { return 0; }
     configure_routes() {
         [ "$round" -lt 2 ] || { [ "$scenario" = transient ] && [ "$round" -ge 5 ]; }
@@ -67,6 +72,7 @@ for scenario in transient permanent; do (
     boot_ms() { printf '%s\n' "$((round * 1000))"; }
     runtime_log() { printf '%s\n' "$*" >> "$R/events"; }
     publish() {
+        if [ "$1" = running ]; then [ "$flushes" -eq 1 ] || exit 97; fi
         printf '%s %s\n' "$1" "${2:--}" > "$STATE/status"
         printf '%s %s %s\n' "$round" "$1" "${2:--}" >> "$R/events"
     }
@@ -76,7 +82,12 @@ for scenario in transient permanent; do (
         [ "$round" -lt 35 ] || exit 99
     }
     supervise
-    if [ "$scenario" = transient ]; then
+    if [ "$scenario" = cancelled ]; then
+        [ "$flushes" -eq 1 ]
+        ! grep -q ' running ' "$R/events"
+        grep -q '^0 disabled -$' "$R/events"
+        echo 'PASS a stop during DNS refresh cannot publish a stale running state'
+    elif [ "$scenario" = transient ]; then
         grep -q '^6 stopping -$' "$R/events"
         grep -q '^6 disabled -$' "$R/events"
         ! grep -q 'NETWORK_RULES_APPLY_FAILED' "$R/events"

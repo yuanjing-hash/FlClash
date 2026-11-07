@@ -30,7 +30,7 @@ class RootLaunchConfigTest {
         )
 
     @Test
-    fun sharedSystemDnsBypassesBothApplicationListModes() {
+    fun applicationListsKeepSharedDnsOnTheSelectedCapturePolicy() {
         for (mode in listOf(AccessControlMode.ACCEPT_SELECTED, AccessControlMode.REJECT_SELECTED)) {
             for (hijack in listOf(false, true)) {
                 val options =
@@ -52,7 +52,11 @@ class RootLaunchConfigTest {
                         val ends = range.split('-').map(String::toInt)
                         uid >= ends.first() && uid <= ends.last()
                     }
-                assertTrue("Shared DNS must stay native in $mode with hijack=$hijack", bypasses(1051))
+                assertEquals(
+                    "Shared DNS must follow the $mode policy with hijack=$hijack",
+                    mode == AccessControlMode.ACCEPT_SELECTED,
+                    bypasses(1051),
+                )
                 assertTrue(bypasses(10346))
                 assertFalse(bypasses(10200))
                 assertFalse(bypasses(10190))
@@ -104,8 +108,8 @@ class RootLaunchConfigTest {
                 }
             }
         assertEquals(emptyList<Int>(), include)
-        assertEquals(listOf(1051, 10200), exclude)
-        assertEquals(listOf("1051", "10200"), RootLaunchConfig.bypassUidRanges(include, exclude))
+        assertEquals(listOf(10200), exclude)
+        assertEquals(listOf("10200"), RootLaunchConfig.bypassUidRanges(include, exclude))
         assertEquals(
             false,
             RootLaunchConfig.tun(
@@ -142,8 +146,8 @@ class RootLaunchConfigTest {
         assertEquals(true, tun["enable"])
         assertEquals(true, tun["perApp"])
         assertEquals(emptyList<Int>(), tun["includeUid"])
-        assertEquals(listOf(1051, 10314), tun["excludeUid"])
-        assertEquals("1051\n10314", prepared.files["bypass.uids"])
+        assertEquals(listOf(10314), tun["excludeUid"])
+        assertEquals("10314", prepared.files["bypass.uids"])
         assertEquals("1\n", prepared.files["tun.enabled"])
         assertEquals("1\n", prepared.files["per-app-dns"])
         assertEquals(options, Gson().fromJson(prepared.files["vpn-options.json"], VpnOptions::class.java))
