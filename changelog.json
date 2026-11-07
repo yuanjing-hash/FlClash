@@ -2,6 +2,24 @@
   "schemaVersion": 2,
   "versions": [
     {
+      "version": "1.1.10",
+      "tag": "v1.1.10",
+      "date": "2026-11-08",
+      "prerelease": false,
+      "groups": [
+        {
+          "type": "fix",
+          "entries": [
+            {
+              "id": "e2bfbe1",
+              "scope": "android",
+              "text": "Restore selected-app DNS routing and refresh caches after Root TUN transitions"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.1.9",
       "tag": "v1.1.9",
       "date": "2026-11-07",

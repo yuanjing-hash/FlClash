@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.10 (2026-11-08)
+
+**Bug Fixes**
+
+- **android** Restore selected-app DNS routing and refresh caches after Root TUN transitions (e2bfbe1)
+
 ## v1.1.9 (2026-11-07)
 
 **Bug Fixes**
