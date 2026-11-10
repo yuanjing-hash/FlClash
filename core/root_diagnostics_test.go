@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,8 +12,10 @@ import (
 	"time"
 
 	"github.com/metacubex/mihomo/config"
+	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/tunnel"
+	D "github.com/miekg/dns"
 )
 
 func TestRootDiagnosticReportsActualGlobalSelectionAndKeepsCredentialsPrivate(t *testing.T) {
@@ -130,5 +133,106 @@ func TestRootDiagnosticKeepsDnsAndFakeIpFailuresEvenAtLowLogLevels(t *testing.T)
 	recorder.observe(log.Event{LogLevel: log.DEBUG, Payload: "[DNS] example.test --> 192.0.2.1"})
 	if len(recorder.events) != 3 {
 		t.Fatal("failed pre-routing connections disappeared", recorder.events)
+	}
+}
+
+func TestRootDiagnosticRetainsDNSRepliesThroughTheCoreHookAfterStopping(t *testing.T) {
+	directory := t.TempDir()
+	_, stop := startRootNetworkDiagnostics(directory)
+	query := new(D.Msg)
+	query.SetQuestion("images.example.test.", D.TypeA)
+	reply := new(D.Msg)
+	reply.SetReply(query)
+	answer, err := D.NewRR("images.example.test. 60 IN A 192.0.2.1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply.Answer = []D.RR{answer}
+	dns.DefaultQueryNotify(dns.QueryRecord{
+		Question: query.Question[0], Msg: reply, Initiator: "app",
+		Upstream: "https://user:private-password@resolver.test/private-path?key=private-key#proxy",
+		Cached:   true, Start: time.Now(),
+	})
+	stop()
+	if activeRootNetworkDiagnostics.Load() != nil {
+		t.Fatal("stopped session still receives DNS diagnostics")
+	}
+	data, err := os.ReadFile(filepath.Join(directory, "network-state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var state struct {
+		DNS []DnsQuery `json:"recentDNS"`
+	}
+	if err := json.Unmarshal(data, &state); err != nil {
+		t.Fatal(err)
+	}
+	if len(state.DNS) != 1 {
+		t.Fatal("DNS replies disappeared with the running session", string(data))
+	}
+	recorded := state.DNS[0]
+	if recorded.Domain != "images.example.test" || recorded.Type != "A" || recorded.Rcode != "NOERROR" ||
+		!recorded.Cached || recorded.Upstream != "https://resolver.test" ||
+		!reflect.DeepEqual(recorded.Answers, []string{"192.0.2.1"}) {
+		t.Fatal("actual DNS answer lost", recorded)
+	}
+	if strings.Contains(string(data), "private-") || strings.Contains(string(data), "user:") {
+		t.Fatal("resolver credentials in diagnostic")
+	}
+}
+
+func TestRootDiagnosticBoundsDNSRepliesWithoutMutatingTheResponse(t *testing.T) {
+	recorder := &rootNetworkDiagnostics{}
+	reply := new(D.Msg)
+	label := strings.Repeat("x", 60)
+	target := strings.Join([]string{label, label, label, label}, ".")
+	for range 10 {
+		answer, err := D.NewRR(fmt.Sprintf("images.test. 60 IN CNAME %s.", target))
+		if err != nil {
+			t.Fatal(err)
+		}
+		reply.Answer = append(reply.Answer, answer)
+	}
+	text, err := D.NewRR(`images.test. 60 IN TXT "private-value"`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reply.Answer = append([]D.RR{text}, reply.Answer...)
+	for i := range 24 {
+		recorder.observeDNS(dns.QueryRecord{
+			Question: dnsQuestion(fmt.Sprintf("images-%d.%s", i, strings.Repeat("x", 300)), D.TypeA),
+			Msg:      reply, Initiator: strings.Repeat("app", 30), Start: time.Now(),
+		})
+	}
+	if len(reply.Answer) != 11 {
+		t.Fatal("diagnostic changed the live DNS response")
+	}
+	if len(recorder.dns) != 16 || !strings.HasPrefix(recorder.dns[0].Domain, "images-8.") {
+		t.Fatal("incorrect DNS history bound or order")
+	}
+	for _, query := range recorder.dns {
+		if len(query.Domain) > 253 || len(query.Initiator) > 32 || len(query.Answers) != 4 {
+			t.Fatal("unbounded DNS record", query)
+		}
+	}
+	data, err := json.Marshal(recorder.dns)
+	if err != nil || len(data) > 24*1024 || strings.Contains(string(data), "private-value") {
+		t.Fatal("DNS history exceeds its export budget or includes TXT data", len(data), err)
+	}
+}
+
+func TestRootDiagnosticKeepsDNSFailuresWithoutCopyingCredentials(t *testing.T) {
+	recorder := &rootNetworkDiagnostics{}
+	for _, err := range []error{fmt.Errorf("https://user:private-password@resolver.test: %w", context.DeadlineExceeded), fmt.Errorf("private-error")} {
+		recorder.observeDNS(dns.QueryRecord{
+			Question: dnsQuestion("images.test", D.TypeAAAA), Err: err, Start: time.Now(),
+		})
+	}
+	if recorder.dns[0].Error != "timeout" || recorder.dns[1].Error != "failed" {
+		t.Fatal("DNS failure kind lost", recorder.dns)
+	}
+	data, err := json.Marshal(recorder.dns)
+	if err != nil || strings.Contains(string(data), "private-") {
+		t.Fatal("credentials in DNS failure diagnostic", err)
 	}
 }
