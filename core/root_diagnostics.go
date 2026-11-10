@@ -2,22 +2,69 @@ package core
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/metacubex/mihomo/component/profile/cachefile"
 	"github.com/metacubex/mihomo/constant"
+	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/log"
 	"github.com/metacubex/mihomo/tunnel"
 	"github.com/metacubex/mihomo/tunnel/statistic"
+	D "github.com/miekg/dns"
 )
 
 type rootNetworkDiagnostics struct {
 	mu     sync.Mutex
 	events []map[string]string
+	dns    []DnsQuery
+}
+
+var activeRootNetworkDiagnostics atomic.Pointer[rootNetworkDiagnostics]
+
+func (r *rootNetworkDiagnostics) observeDNS(record dns.QueryRecord) {
+	err := record.Err
+	record.Err = nil
+	if record.Msg != nil {
+		reply := *record.Msg
+		reply.Answer = nil
+		for _, answer := range record.Msg.Answer {
+			switch answer.(type) {
+			case *D.A, *D.AAAA, *D.CNAME:
+				reply.Answer = append(reply.Answer, answer)
+			}
+			if len(reply.Answer) == 4 {
+				break
+			}
+		}
+		record.Msg = &reply
+	}
+	query := newDnsQuery(record)
+	query.Domain = query.Domain[:min(len(query.Domain), 253)]
+	query.Initiator = query.Initiator[:min(len(query.Initiator), 32)]
+	for i, answer := range query.Answers {
+		query.Answers[i] = answer[:min(len(answer), 253)]
+	}
+	query.Upstream = ""
+	if upstream, parseErr := url.Parse(record.Upstream); parseErr == nil && upstream.Host != "" {
+		query.Upstream = upstream.Scheme + "://" + upstream.Host
+		query.Upstream = query.Upstream[:min(len(query.Upstream), 256)]
+	}
+	if err != nil {
+		query.Error = probeErrorKind(err)
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.dns) == 16 {
+		copy(r.dns, r.dns[1:])
+		r.dns = r.dns[:15]
+	}
+	r.dns = append(r.dns, query)
 }
 
 func (r *rootNetworkDiagnostics) observe(event log.Event) {
@@ -101,6 +148,7 @@ func (r *rootNetworkDiagnostics) save(path string) {
 	}
 	r.mu.Lock()
 	state["recentErrors"] = append([]map[string]string(nil), r.events...)
+	state["recentDNS"] = append([]DnsQuery(nil), r.dns...)
 	r.mu.Unlock()
 	state["at"] = time.Now().UTC().Format(time.RFC3339Nano)
 	data, err := json.MarshalIndent(state, "", "  ")
@@ -116,6 +164,7 @@ func startRootNetworkDiagnostics(directory string) (func(), func()) {
 	path := filepath.Join(directory, "network-state.json")
 	_ = os.Rename(path, filepath.Join(directory, "network-state.previous.json"))
 	recorder := &rootNetworkDiagnostics{}
+	activeRootNetworkDiagnostics.Store(recorder)
 	subscription := log.Subscribe()
 	drained := make(chan struct{})
 	safeGo("root diagnostic log", func() {
@@ -146,6 +195,7 @@ func startRootNetworkDiagnostics(directory string) (func(), func()) {
 			default:
 			}
 		}, func() {
+			activeRootNetworkDiagnostics.CompareAndSwap(recorder, nil)
 			log.UnSubscribe(subscription)
 			<-drained
 			close(stop)

@@ -2,6 +2,24 @@
   "schemaVersion": 2,
   "versions": [
     {
+      "version": "1.1.11",
+      "tag": "v1.1.11",
+      "date": "2026-11-10",
+      "prerelease": false,
+      "groups": [
+        {
+          "type": "fix",
+          "entries": [
+            {
+              "id": "4329086",
+              "scope": "android",
+              "text": "Apply application access control to SDK sandbox UIDs and retain bounded DNS response diagnostics"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "version": "1.1.10",
       "tag": "v1.1.10",
       "date": "2026-11-08",

@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.11 (2026-11-10)
+
+**Bug Fixes**
+
+- **android** Apply application access control to SDK sandbox UIDs and retain bounded DNS response diagnostics (4329086)
+
 ## v1.1.10 (2026-11-08)
 
 **Bug Fixes**

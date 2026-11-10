@@ -30,6 +30,54 @@ class RootLaunchConfigTest {
         )
 
     @Test
+    fun android13BlacklistExcludesTheApplicationAndItsSdkSandbox() {
+        val options =
+            options().copy(
+                accessControlProps =
+                    AccessControlProps(true, AccessControlMode.REJECT_SELECTED, emptyList(), listOf("self", "excluded", "work", "removed")),
+            )
+        val packages = mapOf("self" to 10190, "excluded" to 10346, "work" to 1010346)
+        val (include, exclude) = RootLaunchConfig.uids(options, 10190, 33, packages::get)
+        assertTrue(include.isEmpty())
+        assertEquals(listOf(10346, 20346, 1010346, 1020346), exclude)
+        assertEquals(listOf("10346", "20346", "1010346", "1020346"), RootLaunchConfig.bypassUidRanges(include, exclude))
+        assertEquals(exclude, RootLaunchConfig.tun(options, include, exclude)["excludeUid"])
+        assertEquals(listOf(10346, 1010346), RootLaunchConfig.uids(options, 10190, 32, packages::get).second)
+    }
+
+    @Test
+    fun android13WhitelistIncludesTheApplicationAndItsSdkSandbox() {
+        val options =
+            options().copy(
+                accessControlProps = AccessControlProps(true, AccessControlMode.ACCEPT_SELECTED, listOf("selected"), emptyList()),
+            )
+        val (include, exclude) = RootLaunchConfig.uids(options, 10190, 33) { 10346 }
+        assertEquals(listOf(0, 1052, 10190, 10346, 20190, 20346), include)
+        assertTrue(exclude.isEmpty())
+        val bypass = RootLaunchConfig.bypassUidRanges(include, exclude)
+        for (uid in listOf(10190, 10346, 20190, 20346)) {
+            assertFalse(bypass.any { range -> uid in range.substringBefore('-').toInt()..range.substringAfter('-').toInt() })
+        }
+        assertEquals(include, RootLaunchConfig.tun(options, include, exclude)["includeUid"])
+    }
+
+    @Test
+    fun sdkSandboxExpansionLeavesOtherUidClassesAndAllApplicationModeIntact() {
+        val options =
+            options().copy(
+                accessControlProps = AccessControlProps(true, AccessControlMode.REJECT_SELECTED, emptyList(), listOf("uid")),
+            )
+        for (uid in listOf(0, 1051, 1052, 9999, 20000, 29999, 90000, 199999)) {
+            assertEquals(listOf(uid), RootLaunchConfig.uids(options, 10190, 37) { uid }.second)
+        }
+        for (uid in listOf(10000, 19999, 1010000, 1019999)) {
+            assertEquals(listOf(uid, uid + 10000), RootLaunchConfig.uids(options, 10190, 37) { uid }.second)
+        }
+        val disabled = options.copy(accessControlProps = options.accessControlProps.copy(enable = false))
+        assertEquals(emptyList<Int>() to emptyList<Int>(), RootLaunchConfig.uids(disabled, 10190, 37) { 10346 })
+    }
+
+    @Test
     fun applicationListsKeepSharedDnsOnTheSelectedCapturePolicy() {
         for (mode in listOf(AccessControlMode.ACCEPT_SELECTED, AccessControlMode.REJECT_SELECTED)) {
             for (hijack in listOf(false, true)) {

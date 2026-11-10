@@ -3,6 +3,7 @@ package com.follow.clash.root
 import android.content.Context
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.os.Build
 import com.follow.clash.common.AccessControlMode
 import com.follow.clash.models.SharedState
 import com.follow.clash.service.models.VpnOptions
@@ -76,16 +77,27 @@ internal object RootLaunchConfig {
         options: VpnOptions,
         appUid: Int,
         resolve: (String) -> Int?,
+    ): Pair<List<Int>, List<Int>> = uids(options, appUid, Build.VERSION.SDK_INT, resolve)
+
+    internal fun uids(
+        options: VpnOptions,
+        appUid: Int,
+        sdkInt: Int,
+        resolve: (String) -> Int?,
     ): Pair<List<Int>, List<Int>> {
         val access = options.accessControlProps
         if (!access.enable) return emptyList<Int>() to emptyList()
 
-        fun resolveAll(packages: List<String>): List<Int> = packages.mapNotNull(resolve).distinct().sorted()
+        fun applicationUids(uid: Int): List<Int> =
+            if (sdkInt >= 33 && uid % 100000 in 10000..19999) listOf(uid, uid + 10000) else listOf(uid)
+
+        fun resolveAll(packages: List<String>): List<Int> = packages.mapNotNull(resolve).flatMap(::applicationUids).distinct().sorted()
+        val ownUids = applicationUids(appUid)
         return when (access.mode) {
             AccessControlMode.ACCEPT_SELECTED ->
-                (resolveAll(access.acceptList) + systemDnsUids + appUid).distinct().sorted() to
+                (resolveAll(access.acceptList) + systemDnsUids + ownUids).distinct().sorted() to
                     emptyList()
-            AccessControlMode.REJECT_SELECTED -> emptyList<Int>() to resolveAll(access.rejectList).filter { it != appUid }
+            AccessControlMode.REJECT_SELECTED -> emptyList<Int>() to resolveAll(access.rejectList).filterNot { it in ownUids }
         }
     }
 

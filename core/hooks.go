@@ -26,6 +26,9 @@ func init() {
 		}
 	}
 	dns.DefaultQueryNotify = func(record dns.QueryRecord) {
+		if recorder := activeRootNetworkDiagnostics.Load(); recorder != nil {
+			recorder.observeDNS(record)
+		}
 		if hasEventListener() {
 			sendMessage(DnsMessage, newDnsQuery(record))
 		}
