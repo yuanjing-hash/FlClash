@@ -93,7 +93,7 @@ internal data class RootDiagnosticEvidence(
         private val items =
             "clock boot-state tools boot-evidence auth-data package ota-properties clock-policy ota-errors " +
                 "device grep processes directories runtime-state proxy-state notifications " +
-                "ipv4 ipv6 routing-options capture-counters resolver-state application-uids core-state core-state-previous iptables ip6tables nft selinux connectivity restore-diff baseline logs"
+                "ipv4 ipv6 routing-options capture-counters sockets resolver-state application-uids core-state core-state-previous iptables ip6tables nft selinux connectivity restore-diff baseline logs"
 
         private fun incompleteManifest(result: ShellResult): String {
             val completed =

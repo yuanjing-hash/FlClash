@@ -29,6 +29,7 @@ ip() {
     printf '%s\n' "$*" >> "$WORK/commands"
     case "$*" in
         '-4 rule add pref 9011 table main suppress_prefixlength 0'|'-6 rule add pref 9011 table main suppress_prefixlength 0') return 0 ;;
+        '-4 rule add pref 9009 iif lo table 2022'|'-6 rule add pref 9009 iif lo table 2022') return 0 ;;
         '-4 rule add pref 8990 fwmark '*|'-6 rule add pref 8990 fwmark '*)
             shift 6
             if [ "$#" = 3 ] && [ "$2" = goto ] && [ "$3" = 9011 ]; then return 0; fi
@@ -40,6 +41,13 @@ ip() {
 }
 install_rules
 ! grep -Eq 'ipproto|dport|sport|uidrange' "$WORK/commands"
-[ "$(wc -l < "$WORK/commands")" -eq 6 ]
+[ "$(wc -l < "$WORK/commands")" -eq 7 ]
+grep -qx -- '-4 rule add pref 9009 iif lo table 2022' "$WORK/commands"
+! grep -q -- '-6 rule add pref 9009' "$WORK/commands"
+printf '1\n' > "$R/config/ipv6.enabled"
+: > "$WORK/commands"
+install_rules
+[ "$(wc -l < "$WORK/commands")" -eq 8 ]
+grep -qx -- '-6 rule add pref 9009 iif lo table 2022' "$WORK/commands"
 echo 'PASS rules install with the Android ip grammar that rejected root.11'
 echo 'PASS native TUN retains destination, protocol and UID routing ownership'

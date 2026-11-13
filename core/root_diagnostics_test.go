@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/config"
 	"github.com/metacubex/mihomo/dns"
 	"github.com/metacubex/mihomo/log"
@@ -133,6 +134,20 @@ func TestRootDiagnosticKeepsDnsAndFakeIpFailuresEvenAtLowLogLevels(t *testing.T)
 	recorder.observe(log.Event{LogLevel: log.DEBUG, Payload: "[DNS] example.test --> 192.0.2.1"})
 	if len(recorder.events) != 3 {
 		t.Fatal("failed pre-routing connections disappeared", recorder.events)
+	}
+}
+
+func TestRootDiagnosticReportsTheActiveOutboundBinding(t *testing.T) {
+	previousInterface, previousMark := dialer.DefaultInterface.Load(), dialer.DefaultRoutingMark.Load()
+	t.Cleanup(func() {
+		dialer.DefaultInterface.Store(previousInterface)
+		dialer.DefaultRoutingMark.Store(previousMark)
+	})
+	dialer.DefaultInterface.Store("rmnet_data3")
+	dialer.DefaultRoutingMark.Store(0x40000000)
+	state := rootNetworkState()
+	if state["outboundInterface"] != "rmnet_data3" || state["routingMark"] != int32(0x40000000) {
+		t.Fatal("actual Core socket binding missing", state)
 	}
 }
 
