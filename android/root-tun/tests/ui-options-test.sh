@@ -73,6 +73,8 @@ grep -q '^COMMIT$' "$WORK/filter4"
 grep -q -- '-4 rule add pref 8990 fwmark 0x20000/0xa0000 goto 9011' "$WORK/routes"
 ! grep -q -- 'fwmark 0x10000' "$WORK/routes"
 ! grep -q -- 'uidrange\|pref 8991' "$WORK/routes"
+grep -qx -- '-4 rule add pref 9009 iif lo table 2022' "$WORK/routes"
+! grep -q -- '-6 rule add pref 9009' "$WORK/routes"
 bypass_selector=$(sed -n 's/^-4 rule add pref 8990 fwmark \([^ ]*\) goto 9011$/\1/p' "$WORK/routes" | grep -v '^0x40000000')
 bypass_value=${bypass_selector%/*}
 bypass_mask=${bypass_selector#*/}

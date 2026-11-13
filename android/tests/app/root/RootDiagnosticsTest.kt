@@ -96,6 +96,7 @@ class RootDiagnosticsTest {
         assertTrue(interrupted.manifest.contains("nft not confirmed"))
         assertTrue(interrupted.manifest.contains("routing-options not confirmed"))
         assertTrue(interrupted.manifest.contains("capture-counters not confirmed"))
+        assertTrue(interrupted.manifest.contains("sockets not confirmed"))
         assertTrue(interrupted.manifest.contains("resolver-state not confirmed"))
         assertTrue(interrupted.manifest.contains("application-uids not confirmed"))
         assertTrue(interrupted.manifest.contains("core-state not confirmed"))

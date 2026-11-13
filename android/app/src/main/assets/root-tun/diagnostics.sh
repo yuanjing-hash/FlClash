@@ -76,6 +76,7 @@ collect ipv4 2 sh -c 'ip -4 rule show; ip -4 route show table all; ip link show;
 collect ipv6 2 sh -c 'ip -6 rule show; ip -6 route show table all'
 collect routing-options 2 sh -c 'for f in vpn-options.json tun.enabled ipv6.enabled dns-hijacking allow-bypass per-app-dns bypass.uids runtime.apk runtime.sha256; do echo "[$f]"; cat "$R/config/$f"; echo; done; for key in private_dns_mode private_dns_default_mode private_dns_specifier; do echo "$key=$(settings get global "$key")"; done'
 collect capture-counters 2 sh -c 'iptables -w 1 -nvxL FCR_OUTPUT; ip6tables -w 1 -nvxL FCR_OUTPUT'
+collect sockets 2 sh -c 'for f in /proc/net/tcp /proc/net/tcp6 /proc/net/udp /proc/net/udp6; do echo "[$f]"; cat "$f"; done'
 collect resolver-state 2 dumpsys dnsresolver
 collect application-uids 3 sh -c 'cmd package list packages -U --user "$((${APP_UID:-0} / 100000))"'
 collect core-state 2 cat "$R/logs/network-state.json"
@@ -91,7 +92,7 @@ collect baseline 1 sh -c 'cat "$R"/state/baseline.*'
 collect logs 1 sh -c 'for f in transitions.log launch.log launch.log.1 watchdog.log watchdog.log.1 supervisor.log supervisor.log.1 core.log core.log.1 validation.log; do echo "[$f]"; tail -c 10000 "$R/logs/$f"; echo file-exit=$?; done'
 batch
 printf '\n[FLCLASH:network:END]\n'
-items='clock boot-state tools boot-evidence auth-data package ota-properties clock-policy ota-errors device grep processes directories runtime-state proxy-state notifications ipv4 ipv6 routing-options capture-counters resolver-state application-uids core-state core-state-previous iptables ip6tables nft selinux connectivity restore-diff baseline logs'
+items='clock boot-state tools boot-evidence auth-data package ota-properties clock-policy ota-errors device grep processes directories runtime-state proxy-state notifications ipv4 ipv6 routing-options capture-counters sockets resolver-state application-uids core-state core-state-previous iptables ip6tables nft selinux connectivity restore-diff baseline logs'
 printf '\n[FLCLASH:manifest:BEGIN]\n'
 for item in $items; do
     cat "$D/$item.manifest" 2>/dev/null || printf '%s not-collected\n' "$item"

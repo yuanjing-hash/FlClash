@@ -340,6 +340,11 @@ install_rules() {
             ip "$family" rule add pref 8990 fwmark 0x20000/0xa0000 goto 9011 || return 1
         fi
     done
+    # Native Android rules miss sockets already bound to an uplink address.
+    ip -4 rule add pref 9009 iif lo table 2022 || return 1
+    if [ "$(cat "$R/config/ipv6.enabled" 2>/dev/null)" = 1 ]; then
+        ip -6 rule add pref 9009 iif lo table 2022 || return 1
+    fi
     emit_filter 4 | iptables-restore -w 2 --noflush || return 1
     iptables -w 1 -I OUTPUT 1 -j FCR_OUTPUT || return 1
     emit_filter 6 | ip6tables-restore -w 2 --noflush || return 1

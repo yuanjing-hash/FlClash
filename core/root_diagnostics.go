@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/metacubex/mihomo/component/dialer"
 	"github.com/metacubex/mihomo/component/profile/cachefile"
 	"github.com/metacubex/mihomo/constant"
 	"github.com/metacubex/mihomo/dns"
@@ -97,6 +98,8 @@ func rootNetworkState() map[string]any {
 	}
 	defer selectMu.Unlock()
 	state := map[string]any{"mode": tunnel.Mode().String(), "sniffing": tunnel.IsSniffing(), "running": isRunning.Load()}
+	state["outboundInterface"] = dialer.DefaultInterface.Load()
+	state["routingMark"] = dialer.DefaultRoutingMark.Load()
 	state["cacheFile"] = constant.Path.Cache()
 	if cfg := currentConfig; cfg != nil {
 		state["proxyCount"], state["ruleCount"] = len(cfg.Proxies), len(cfg.Rules)
