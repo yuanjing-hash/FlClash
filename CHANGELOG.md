@@ -1,5 +1,11 @@
 # Changelog
 
+## v1.1.12 (2026-11-13)
+
+**Bug Fixes**
+
+- **android** Capture sockets bound to cellular and Wi-Fi source addresses (6ac8394)
+
 ## v1.1.11 (2026-11-10)
 
 **Bug Fixes**
