@@ -55,6 +55,7 @@ ip -6 address add fdfe:dcba:9876::1/126 dev flcrtun0 nodad
 ip -4 route add default dev wlan0
 ip -6 route add default dev wlan0
 ip -4 route add 203.0.113.0/24 dev flcrtun0 table 2022
+ip -4 route add 192.0.2.53/32 dev flcrtun0 table 2022
 ip -6 route add 2001:db8:100::/64 dev flcrtun0 table 2022
 for family in -4 -6; do
     ip "$family" rule add pref 8991 uidrange 10346-10346 goto 9011
@@ -97,6 +98,8 @@ assert_device rmnet_data3 -6 route get 2001:db8:100::10 from 2001:db8:2::181 uid
 assert_device rmnet_data3 -4 route get 203.0.113.1 from 10.0.0.2 mark 0x40000000 uid 0
 assert_device rmnet_data3 -4 route get 203.0.113.1 from 10.0.0.2 mark 0x20170 uid 10527
 assert_device flcrtun0 -4 route get 203.0.113.1 from 10.0.0.2 mark 0x10170 uid 10527
+assert_device flcrtun0 -4 route get 192.0.2.53 from 10.0.0.2 mark 0xf0170 uid 1051
+assert_device rmnet_data3 -4 route get 192.0.2.53 from 10.0.0.2 mark 0xf0170 uid 10346
 assert_device wlan0 -4 route get 192.168.2.1 from 10.0.0.2 uid 10527
 assert_device rmnet_data3 -4 route get 203.0.113.1 from 10.1.0.2 iif shared0
 echo 'PASS Wi-Fi and cellular source binding follows application and protected-socket policy'
